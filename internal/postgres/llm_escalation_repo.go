@@ -146,6 +146,9 @@ func (r *LLMEscalationRepo) Complete(ctx context.Context, request llmescalation.
 				job.Failure = llmescalation.FailureInFlight
 			case !request.Capacity:
 				job.Failure = llmescalation.FailureCapacity
+				if request.IntervalFailure != llmescalation.FailureNone {
+					job.Failure = request.IntervalFailure
+				}
 			}
 			if job.Failure != llmescalation.FailureNone {
 				job.Status = llmescalation.JobSkipped
@@ -470,7 +473,7 @@ func (r *LLMEscalationRepo) Summary(ctx context.Context, installation string) (l
 		PositiveJudgments: row.PositiveJudgments, ActualInterventions: row.ActualInterventions,
 		ShadowInterventions: row.ShadowInterventions, StaleResults: row.StaleResults,
 		Timeouts: row.Timeouts, InvalidResponses: row.InvalidResponses,
-		CapacitySkips: row.CapacitySkips, AttemptLimitExhaustion: row.AttemptLimitExhaustion,
+		CapacitySkips: row.CapacitySkips, IntervalUnavailableSkips: row.IntervalUnavailableSkips, AttemptLimitExhaustion: row.AttemptLimitExhaustion,
 	}, nil
 }
 

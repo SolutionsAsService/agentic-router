@@ -30,7 +30,7 @@ const (
 	QwenReleaseName     = "qwen-finetuned-escalation-classifier"
 	QwenModelSHA256     = "620f908e24268bf9f116d533cc1d42f825f2a38599374c3db63c5db210b783d6"
 	QwenPromptSHA256    = "6fc829a3bc36d3f5c2cd2705ee28ba3d4f61dc5380313adf2012bfab22a8f9a0"
-	QwenRendererVersion = "five_turn_v1"
+	QwenRendererVersion = "five_turn_v2"
 	QwenProvider        = "modal"
 	QwenSchemaVersion   = "escalation_classifier_v1"
 )
@@ -116,16 +116,17 @@ const (
 type FailureCode string
 
 const (
-	FailureNone      FailureCode = ""
-	FailureCapacity  FailureCode = "capacity"
-	FailureCallLimit FailureCode = "call_limit"
-	FailureInFlight  FailureCode = "in_flight"
-	FailureStale     FailureCode = "stale"
-	FailureTimeout   FailureCode = "timeout"
-	FailureJudge     FailureCode = "judge_error"
-	FailureInvalid   FailureCode = "invalid_response"
-	FailureNoTarget  FailureCode = "no_eligible_target"
-	FailureExpired   FailureCode = "lease_expired"
+	FailureNone                FailureCode = ""
+	FailureCapacity            FailureCode = "capacity"
+	FailureIntervalUnavailable FailureCode = "interval_unavailable"
+	FailureCallLimit           FailureCode = "call_limit"
+	FailureInFlight            FailureCode = "in_flight"
+	FailureStale               FailureCode = "stale"
+	FailureTimeout             FailureCode = "timeout"
+	FailureJudge               FailureCode = "judge_error"
+	FailureInvalid             FailureCode = "invalid_response"
+	FailureNoTarget            FailureCode = "no_eligible_target"
+	FailureExpired             FailureCode = "lease_expired"
 )
 
 // Session stores cadence and the accepted floor independently of ordinary pins.
@@ -178,10 +179,11 @@ type StartRequest struct {
 
 // CompleteRequest counts one successfully delivered logical response exactly once.
 type CompleteRequest struct {
-	Session   Session
-	Boundary  [32]byte
-	RequestID string
-	Capacity  bool
+	Session         Session
+	Boundary        [32]byte
+	RequestID       string
+	Capacity        bool
+	IntervalFailure FailureCode
 }
 
 // Completion returns a newly claimed job only when inference should be launched.
@@ -193,14 +195,15 @@ type Completion struct {
 
 // Summary aggregates content-free retained checkpoint outcomes.
 type Summary struct {
-	PositiveJudgments      int64 `json:"positive_judgments"`
-	ActualInterventions    int64 `json:"actual_interventions"`
-	ShadowInterventions    int64 `json:"shadow_interventions"`
-	StaleResults           int64 `json:"stale_results"`
-	Timeouts               int64 `json:"timeouts"`
-	InvalidResponses       int64 `json:"invalid_responses"`
-	CapacitySkips          int64 `json:"capacity_skips"`
-	AttemptLimitExhaustion int64 `json:"attempt_limit_exhaustion"`
+	PositiveJudgments        int64 `json:"positive_judgments"`
+	ActualInterventions      int64 `json:"actual_interventions"`
+	ShadowInterventions      int64 `json:"shadow_interventions"`
+	StaleResults             int64 `json:"stale_results"`
+	Timeouts                 int64 `json:"timeouts"`
+	InvalidResponses         int64 `json:"invalid_responses"`
+	CapacitySkips            int64 `json:"capacity_skips"`
+	IntervalUnavailableSkips int64 `json:"interval_unavailable_skips"`
+	AttemptLimitExhaustion   int64 `json:"attempt_limit_exhaustion"`
 }
 
 // ApplyRequest records only a routing constraint that was successfully applied.

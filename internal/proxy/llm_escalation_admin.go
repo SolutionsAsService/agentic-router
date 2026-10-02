@@ -155,7 +155,7 @@ func (s *Service) UpdateEscalationSelection(ctx context.Context, installationID 
 	if usesQwen && s.qwenEscalationJudge == nil {
 		return llmescalation.Selection{}, fmt.Errorf("%w: Qwen deployment capability is disabled", ErrEscalationJudgeUnavailable)
 	}
-	if flags.IsLLMEscalationClassifier(update.Active) && !s.llmEscalationActiveEnabled {
+	if update.Active == flags.EscalationClassifierSwitchyard && !s.llmEscalationActiveEnabled {
 		return llmescalation.Selection{}, fmt.Errorf("%w: active rollout is disabled", ErrEscalationJudgeUnavailable)
 	}
 	selection, err := s.llmEscalationConfiguration.SetSelection(ctx, installationID, update)
@@ -178,6 +178,9 @@ func (s *Service) withEscalationReadiness(selection llmescalation.Selection) llm
 	}
 	if !selection.Ready {
 		selection.UnavailableReason = "deployment capability is disabled"
+	} else if selection.Active == flags.EscalationClassifierSwitchyard && !s.llmEscalationActiveEnabled {
+		selection.Ready = false
+		selection.UnavailableReason = "active rollout is disabled"
 	}
 	return selection
 }

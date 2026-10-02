@@ -325,6 +325,7 @@ SELECT
   count(*) FILTER (WHERE j.job->>'failure' = 'timeout')::bigint AS timeouts,
   count(*) FILTER (WHERE j.job->>'failure' = 'invalid_response')::bigint AS invalid_responses,
   count(*) FILTER (WHERE j.job->>'failure' = 'capacity')::bigint AS capacity_skips,
+  count(*) FILTER (WHERE j.job->>'failure' = 'interval_unavailable')::bigint AS interval_unavailable_skips,
   count(*) FILTER (WHERE j.job->>'failure' = 'call_limit')::bigint AS attempt_limit_exhaustion
 FROM router.llm_escalation_jobs j
 JOIN router.llm_escalation_sessions s ON s.lifetime = j.lifetime
@@ -338,14 +339,15 @@ type GetLLMEscalationSummaryParams struct {
 }
 
 type GetLLMEscalationSummaryRow struct {
-	PositiveJudgments      int64
-	ActualInterventions    int64
-	ShadowInterventions    int64
-	StaleResults           int64
-	Timeouts               int64
-	InvalidResponses       int64
-	CapacitySkips          int64
-	AttemptLimitExhaustion int64
+	PositiveJudgments        int64
+	ActualInterventions      int64
+	ShadowInterventions      int64
+	StaleResults             int64
+	Timeouts                 int64
+	InvalidResponses         int64
+	CapacitySkips            int64
+	IntervalUnavailableSkips int64
+	AttemptLimitExhaustion   int64
 }
 
 // Aggregate only bounded operational metadata; rationale and transcript are excluded.
@@ -358,6 +360,7 @@ type GetLLMEscalationSummaryRow struct {
 //	  count(*) FILTER (WHERE j.job->>'failure' = 'timeout')::bigint AS timeouts,
 //	  count(*) FILTER (WHERE j.job->>'failure' = 'invalid_response')::bigint AS invalid_responses,
 //	  count(*) FILTER (WHERE j.job->>'failure' = 'capacity')::bigint AS capacity_skips,
+//	  count(*) FILTER (WHERE j.job->>'failure' = 'interval_unavailable')::bigint AS interval_unavailable_skips,
 //	  count(*) FILTER (WHERE j.job->>'failure' = 'call_limit')::bigint AS attempt_limit_exhaustion
 //	FROM router.llm_escalation_jobs j
 //	JOIN router.llm_escalation_sessions s ON s.lifetime = j.lifetime
@@ -374,6 +377,7 @@ func (q *Queries) GetLLMEscalationSummary(ctx context.Context, arg GetLLMEscalat
 		&i.Timeouts,
 		&i.InvalidResponses,
 		&i.CapacitySkips,
+		&i.IntervalUnavailableSkips,
 		&i.AttemptLimitExhaustion,
 	)
 	return i, err

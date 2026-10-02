@@ -134,6 +134,7 @@ SELECT
   count(*) FILTER (WHERE j.job->>'failure' = 'timeout')::bigint AS timeouts,
   count(*) FILTER (WHERE j.job->>'failure' = 'invalid_response')::bigint AS invalid_responses,
   count(*) FILTER (WHERE j.job->>'failure' = 'capacity')::bigint AS capacity_skips,
+  count(*) FILTER (WHERE j.job->>'failure' = 'interval_unavailable')::bigint AS interval_unavailable_skips,
   count(*) FILTER (WHERE j.job->>'failure' = 'call_limit')::bigint AS attempt_limit_exhaustion
 FROM router.llm_escalation_jobs j
 JOIN router.llm_escalation_sessions s ON s.lifetime = j.lifetime

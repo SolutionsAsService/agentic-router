@@ -66,7 +66,7 @@ func (t *llmEscalationTurn) constraint() *escalation.Constraint {
 
 func (s *Service) beginLLMEscalation(ctx context.Context, env *translate.RequestEnvelope, req router.Request, res *turnLoopResult, apiKeyID string) *llmEscalationTurn {
 	selection := flags.EscalationFromContext(ctx)
-	active := flags.IsLLMEscalationClassifier(selection.Active) && s.llmEscalationActiveEnabled
+	active := flags.IsLLMEscalationClassifier(selection.Active) && (selection.Active != flags.EscalationClassifierSwitchyard || s.llmEscalationActiveEnabled)
 	shadow := flags.IsLLMEscalationClassifier(selection.Shadow)
 	classifier := selection.Shadow
 	if active {
@@ -79,7 +79,7 @@ func (s *Service) beginLLMEscalation(ctx context.Context, env *translate.Request
 	if (!active && !shadow) || s.llmEscalationStore == nil || judge == nil || (active && res.Strategy != router.StrategyHMMEmbedding) || req.ShadowMode || req.ForceModel != "" || req.ForceCluster != "" || res.InstallationID == uuid.Nil || (res.TurnType != turntype.MainLoop && res.TurnType != turntype.ToolResult) {
 		return nil
 	}
-	if classifier == flags.EscalationClassifierSwitchyard && (len(req.GatewayProviders) > 0 || slices.Contains(installationExcludedProvidersFromContext(ctx), providers.ProviderFireworks)) {
+	if len(req.GatewayProviders) > 0 || (classifier == flags.EscalationClassifierSwitchyard && slices.Contains(installationExcludedProvidersFromContext(ctx), providers.ProviderFireworks)) {
 		observability.FromContext(ctx).Info("LLM escalation skipped", "reason", "provider_restricted")
 		return nil
 	}
@@ -237,7 +237,11 @@ func (s *Service) completeLLMEscalation(ctx context.Context, res turnLoopResult,
 		}
 	}
 	completionCtx, cancelCompletion := context.WithTimeout(context.WithoutCancel(ctx), llmEscalationBookkeepingTimeout)
-	completion, err := s.llmEscalationStore.Complete(completionCtx, llmescalation.CompleteRequest{Session: turn.session, Boundary: turn.boundary, RequestID: turn.requestID, Capacity: capacity})
+	intervalFailure := llmescalation.FailureNone
+	if !ready {
+		intervalFailure = llmescalation.FailureIntervalUnavailable
+	}
+	completion, err := s.llmEscalationStore.Complete(completionCtx, llmescalation.CompleteRequest{Session: turn.session, Boundary: turn.boundary, RequestID: turn.requestID, Capacity: capacity, IntervalFailure: intervalFailure})
 	cancelCompletion()
 	if err != nil || completion.Job == nil {
 		if capacity {

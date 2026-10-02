@@ -1,8 +1,10 @@
 package llmescalation
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"weave-os/router/internal/translate"
@@ -10,6 +12,11 @@ import (
 
 const qwenIntervalWidth = 5
 const qwenMinimumStart = 5
+
+const (
+	qwenToolResultOK    = "ok"
+	qwenToolResultError = "ERR"
+)
 
 type qwenTurn struct {
 	userText    []string
@@ -93,17 +100,21 @@ func qwenToolCall(block translate.EscalationBlock) string {
 	if name == "" {
 		name = "?"
 	}
-	var arguments map[string]any
-	if json.Unmarshal([]byte(block.ArgumentsJSON), &arguments) != nil || len(arguments) == 0 {
+	if block.ArgumentsJSON == "" {
 		return name + "()"
 	}
-	for _, key := range []string{"command", "file_path", "notebook_path", "pattern", "path", "query", "prompt"} {
-		if value, ok := arguments[key].(string); ok && value != "" {
-			return fmt.Sprintf("%s(%s=%q)", name, key, qwenTruncate(value, 300))
+	var arguments any
+	if json.Unmarshal([]byte(block.ArgumentsJSON), &arguments) != nil {
+		return fmt.Sprintf("%s(%s)", name, qwenTruncate(qwenCompactJSON(block.ArgumentsJSON), 300))
+	}
+	if fields, ok := arguments.(map[string]any); ok {
+		for _, key := range []string{"command", "file_path", "notebook_path", "pattern", "path", "query", "prompt"} {
+			if value, ok := fields[key].(string); ok && value != "" {
+				return fmt.Sprintf("%s(%s=%q)", name, key, qwenTruncate(value, 300))
+			}
 		}
 	}
-	encoded, _ := json.Marshal(arguments)
-	return fmt.Sprintf("%s(%s)", name, qwenTruncate(string(encoded), 300))
+	return fmt.Sprintf("%s(%s)", name, qwenTruncate(qwenCompactJSON(block.ArgumentsJSON), 300))
 }
 
 func qwenToolResult(block translate.EscalationBlock) string {
@@ -120,10 +131,21 @@ func qwenToolResult(block translate.EscalationBlock) string {
 				}
 			}
 		}
+		if text == "" {
+			text = qwenCompactJSON(block.ContentJSON)
+		}
 	}
-	marker := "ok"
+	marker := qwenToolResultOK
 	if block.IsError != nil && *block.IsError {
-		marker = "ERR"
+		marker = qwenToolResultError
 	}
 	return fmt.Sprintf("[%s] %s", marker, qwenTruncate(text, 400))
+}
+
+func qwenCompactJSON(raw string) string {
+	var compact bytes.Buffer
+	if json.Compact(&compact, []byte(raw)) != nil {
+		return strconv.Quote(raw)
+	}
+	return compact.String()
 }
