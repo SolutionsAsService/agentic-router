@@ -60,6 +60,7 @@ func (f *fakeRouter) Route(ctx context.Context, req router.Request) (router.Deci
 type fakeProvider struct {
 	proxyBodies    [][]byte
 	proxyEndpoints []providers.Endpoint
+	proxyHeaders   []http.Header
 	proxyResponse  func(w http.ResponseWriter)
 	proxyErr       error
 	// proxyCreds records the resolved credential per dispatch; nil means
@@ -79,6 +80,7 @@ func (f *fakeProvider) Proxy(ctx context.Context, decision router.Decision, prep
 	copy(saved, prep.Body)
 	f.proxyBodies = append(f.proxyBodies, saved)
 	f.proxyEndpoints = append(f.proxyEndpoints, prep.Endpoint)
+	f.proxyHeaders = append(f.proxyHeaders, prep.Headers.Clone())
 	f.proxyCreds = append(f.proxyCreds, proxy.CredentialsFromContext(ctx))
 	if err, ok := f.proxyErrByEndpoint[prep.Endpoint]; ok {
 		return err

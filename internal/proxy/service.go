@@ -3357,6 +3357,17 @@ func (s *Service) repinOffRefusingModel(ctx context.Context, sessionKey [session
 var anthropicPingFrame = []byte(sseEvent("ping", `{"type":"ping"}`))
 
 func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.ResponseWriter, r *http.Request) (returnErr error) {
+	switch gjson.GetBytes(body, "thread.type").String() {
+	case translate.MessageThreadContinue:
+		observability.FromContext(ctx).Info("Rejecting message-thread continue; client resends full history")
+		return writeMessageThreadUnsupported(w)
+	case translate.MessageThreadCreate:
+		var threadErr error
+		if body, threadErr = sjson.DeleteBytes(body, "thread"); threadErr != nil {
+			return fmt.Errorf("strip message thread: %w", threadErr)
+		}
+		translate.StripMessageThreadsBeta(r.Header)
+	}
 	ctx, returnErr = s.withClassifierInput(ctx, body, router.EndpointAnthropicMessages)
 	if returnErr != nil {
 		return returnErr
