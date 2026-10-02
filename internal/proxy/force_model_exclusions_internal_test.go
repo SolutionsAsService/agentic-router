@@ -468,6 +468,19 @@ func TestForcedModelBinding_NoAllowlistLeavesPassthroughForcingUnchanged(t *test
 	assert.Equal(t, providers.ProviderAnthropic, binding)
 }
 
+func TestForcedModelBinding_RefreshesRetiredProviderOnSavedPin(t *testing.T) {
+	svc := NewService(nil, nil, nil, false, nil, nil, false,
+		providers.ProviderAnthropic, "claude-haiku-4-5", nil).
+		WithDeploymentKeyedProviders(keyed(providers.ProviderOpenRouter))
+
+	binding, reason := svc.forcedModelBinding(
+		context.Background(), "deepseek/deepseek-v4-flash", providers.ProviderMakora)
+
+	assert.Empty(t, reason)
+	assert.Equal(t, providers.ProviderOpenRouter, binding,
+		"a saved force pin must move off Makora after its V4 binding is retired")
+}
+
 func gatewayKeyCtx(model string) context.Context {
 	return context.WithValue(context.Background(), ExternalAPIKeysContextKey{},
 		[]*auth.ExternalAPIKey{{

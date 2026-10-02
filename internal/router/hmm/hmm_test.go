@@ -199,7 +199,7 @@ func TestCatalogRoutingTargetsResolveCurrentHMMRosterArmsToProviders(t *testing.
 		gotRosterIDs = append(gotRosterIDs, candidate.RosterID)
 	}
 	for _, rosterID := range []string{
-		"deepseek/deepseek-v4-flash",
+		"deepseek/deepseek-v4.1-flash",
 		"qwen/qwen3-coder-next",
 		"openai/gpt-5.4-nano",
 		"minimax/minimax-m3",

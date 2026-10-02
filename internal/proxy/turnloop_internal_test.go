@@ -500,14 +500,14 @@ func TestNormalizeHMMStayPin_RepairsMismatchedProvider(t *testing.T) {
 	)
 	pin := sessionpin.Pin{
 		Provider:        providers.ProviderOpenAI,
-		LastServedModel: "deepseek/deepseek-v4-flash",
+		LastServedModel: "deepseek/deepseek-v4.1-flash",
 		LastTurnEndedAt: time.Now(),
 		PinnedUntil:     time.Now().Add(time.Hour),
 	}
 
 	normalized, ok := svc.normalizeHMMStayPin(router.Request{}, pin)
 	require.True(t, ok)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", normalized.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", normalized.Model)
 	assert.Equal(t, providers.ProviderMakora, normalized.Provider,
 		"a sticky HMM pin must resolve the provider from its retained model")
 }
@@ -526,7 +526,7 @@ func TestNormalizeHMMStayPin_ReResolvesDisabledProvider(t *testing.T) {
 	)
 	pin := sessionpin.Pin{
 		Provider:        providers.ProviderOpenAI,
-		LastServedModel: "deepseek/deepseek-v4-flash",
+		LastServedModel: "deepseek/deepseek-v4.1-flash",
 		LastTurnEndedAt: time.Now(),
 		PinnedUntil:     time.Now().Add(time.Hour),
 	}
@@ -595,7 +595,7 @@ func TestRecordTurnUsage_HMMEVStayWritesHistoryOnly(t *testing.T) {
 		},
 		Fresh: router.Decision{
 			Provider: providers.ProviderMakora,
-			Model:    "deepseek/deepseek-v4-flash",
+			Model:    "deepseek/deepseek-v4.1-flash",
 			Reason:   "hmm_policy(classifier 'fast')",
 			Metadata: &router.RoutingMetadata{
 				Strategy: string(router.StrategyHMM),
@@ -654,7 +654,7 @@ func TestHMMCostGate_StaysOnWarmCacheWhenCheaperFreshDoesNotClearEV(t *testing.T
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -699,7 +699,7 @@ func TestHMMCostGate_SwitchesCheaperFreshWhenEVPositive(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -718,7 +718,7 @@ func TestHMMCostGate_SwitchesCheaperFreshWhenEVPositive(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Equal(t, "claude-sonnet-5", stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonEVPositive, plan.Reason)
@@ -727,7 +727,7 @@ func TestHMMCostGate_SwitchesCheaperFreshWhenEVPositive(t *testing.T) {
 func TestHMMCostGate_SameTierPinSuppressesLateralSwitchWhenEnabled(t *testing.T) {
 	svc := NewService(
 		nil,
-		map[string]providers.Client{providers.ProviderOpenAI: nil, providers.ProviderMakora: nil},
+		map[string]providers.Client{providers.ProviderOpenAI: nil, providers.ProviderOpenRouter: nil},
 		nil,
 		false,
 		nil,
@@ -742,8 +742,8 @@ func TestHMMCostGate_SameTierPinSuppressesLateralSwitchWhenEnabled(t *testing.T)
 		LastTurnEndedAt: time.Now().Add(-30 * time.Second),
 	}
 	fresh := router.Decision{
-		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Provider: providers.ProviderOpenRouter,
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -765,7 +765,7 @@ func TestHMMCostGate_SameTierPinSuppressesLateralSwitchWhenEnabled(t *testing.T)
 		false,
 	)
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Equal(t, "gpt-4.1-mini", stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonEVPositive, plan.Reason)
@@ -807,7 +807,7 @@ func TestHMMCostGate_SameTierPinDoesNotBlockCrossTierSwitch(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -827,7 +827,7 @@ func TestHMMCostGate_SameTierPinDoesNotBlockCrossTierSwitch(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Equal(t, "claude-sonnet-5", stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonEVPositive, plan.Reason)
@@ -897,7 +897,7 @@ func TestHMMCostGate_SameTierPinIgnoresUnknownTierModels(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -917,7 +917,7 @@ func TestHMMCostGate_SameTierPinIgnoresUnknownTierModels(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Equal(t, "claude-opus-4-5", stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonEVPositive, plan.Reason)
@@ -945,7 +945,7 @@ func TestHMMCostGate_PhaseChangeFollowsFreshDecision(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'balanced')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -964,7 +964,7 @@ func TestHMMCostGate_PhaseChangeFollowsFreshDecision(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Equal(t, "claude-sonnet-5", stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, hmmReasonPhaseChange, plan.Reason)
@@ -991,7 +991,7 @@ func TestHMMCostGate_HistoryPhaseChangeFollowsFreshDecision(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'balanced')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -1010,7 +1010,7 @@ func TestHMMCostGate_HistoryPhaseChangeFollowsFreshDecision(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Equal(t, "claude-sonnet-5", stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, hmmReasonPhaseChange, plan.Reason)
@@ -1146,7 +1146,7 @@ func TestHMMCostGate_IgnoresExpiredActivePin(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -1165,7 +1165,7 @@ func TestHMMCostGate_IgnoresExpiredActivePin(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Empty(t, stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonNoPin, plan.Reason)
@@ -1195,7 +1195,7 @@ func TestHMMCostGate_IgnoresNonHMMActivePin(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -1214,7 +1214,7 @@ func TestHMMCostGate_IgnoresNonHMMActivePin(t *testing.T) {
 	)
 
 	assert.False(t, sticky, "a non-HMM cluster pin must not win an HMM EV stay")
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Empty(t, stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonNoPin, plan.Reason)
@@ -1244,7 +1244,7 @@ func TestHMMCostGate_HonorsHMMReasonedActivePin(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -1292,7 +1292,7 @@ func TestHMMCostGate_IgnoresMaxedHistory(t *testing.T) {
 	}
 	fresh := router.Decision{
 		Provider: providers.ProviderMakora,
-		Model:    "deepseek/deepseek-v4-flash",
+		Model:    "deepseek/deepseek-v4.1-flash",
 		Reason:   "hmm_policy(classifier 'fast')",
 		Metadata: &router.RoutingMetadata{
 			Strategy:    string(router.StrategyHMM),
@@ -1311,7 +1311,7 @@ func TestHMMCostGate_IgnoresMaxedHistory(t *testing.T) {
 	)
 
 	assert.False(t, sticky)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", decision.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", decision.Model)
 	assert.Empty(t, stayModel)
 	assert.Equal(t, planner.OutcomeSwitch, plan.Outcome)
 	assert.Equal(t, planner.ReasonNoPin, plan.Reason)

@@ -82,10 +82,10 @@ func TestCandidateK12Loads(t *testing.T) {
 		assert.InDeltaf(t, 0.7, a, 1e-9, "cluster %d alpha must be the 0.7 sweet spot", i)
 	}
 
-	// 16 of the frozen bundle's 21: deepseek-v4-pro, opus-4-8, qwen3.7-plus,
+	// 15 of the frozen bundle's 21: deepseek-v4-pro/flash, opus-4-8, qwen3.7-plus,
 	// gpt-5.5 and fable-5 retired to passthrough; fable-5 led 4 clusters so
 	// dropping it reshapes the wins below.
-	require.Len(t, s.models, 16, "retired models must be the only ones dropped under the full provider set")
+	require.Len(t, s.models, 15, "retired models must be the only ones dropped under the full provider set")
 
 	wins := map[string]int{}
 	for c := 0; c < bundle.Centroids.K; c++ {

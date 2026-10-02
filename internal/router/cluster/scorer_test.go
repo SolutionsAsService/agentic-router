@@ -1256,12 +1256,12 @@ func TestScorer_DropsCatalogRetiredRegistryEntries(t *testing.T) {
 	cb := buildCentroidsBlob(t, 1, dim, c0)
 	rb := []byte(`{"rankings": {"0": {
 		"deepseek/deepseek-v4-pro": 0.99,
-		"deepseek/deepseek-v4-flash": 0.50
+		"deepseek/deepseek-v4.1-flash": 0.50
 	}}}`)
 	regb := []byte(`{
 		"deployed_models": [
 			{"model": "deepseek/deepseek-v4-pro", "provider": "together", "bench_column": "x", "proxy": true},
-			{"model": "deepseek/deepseek-v4-flash", "provider": "makora", "bench_column": "y", "proxy": true}
+			{"model": "deepseek/deepseek-v4.1-flash", "provider": "makora", "bench_column": "y", "proxy": true}
 		]
 	}`)
 	cfg := cfgForTest()
@@ -1277,7 +1277,7 @@ func TestScorer_DropsCatalogRetiredRegistryEntries(t *testing.T) {
 	// It outranks flash in the bundle, so it would win argmax if eligible.
 	got, err := s.Route(context.Background(), router.Request{PromptText: strings.Repeat("x", 100)})
 	require.NoError(t, err)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", got.Model)
+	assert.Equal(t, "deepseek/deepseek-v4.1-flash", got.Model)
 }
 
 func TestScorer_V2DynamicScoring(t *testing.T) {

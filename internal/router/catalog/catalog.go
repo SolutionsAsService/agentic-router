@@ -601,21 +601,22 @@ var Models = []Model{
 	// DeepSeek V4 natively serves 1,048,576 tokens; the 131_072 carried over
 	// from V3.2 was filtering requests over ~128K (excludeContextOverflowModels
 	// in proxy/service.go).
-	{ID: "deepseek/deepseek-v4-flash", Source: SourceOpenSource, Tier: TierLow, ContextWindow: 1_048_576, ImageInput: ImageInputUnsupported, AgenticUse: AgenticLow, Providers: []ProviderBinding{
-		{Provider: providers.ProviderMakora, UpstreamID: "deepseek-ai/DeepSeek-V4-Flash",
-			Price: Pricing{InputUSDPer1M: 0.1134, OutputUSDPer1M: 0.2791, CacheReadMultiplier: 0.20}},
+	// Makora retired V4 Flash; explicit version pins remain available on other providers.
+	{ID: "deepseek/deepseek-v4-flash", Source: SourceOpenSource, ContextWindow: 1_048_576, ImageInput: ImageInputUnsupported, AgenticUse: AgenticLow, Providers: []ProviderBinding{
 		{Provider: providers.ProviderOpenRouter, Price: Pricing{InputUSDPer1M: 0.140, OutputUSDPer1M: 0.280, CacheReadMultiplier: 0.10}},
 		// Trailing Wafer bindings ($0.28/$0.56 fast tier): resolve only when
-		// Makora and OpenRouter are unwired; wafer_anthropic trails wafer.
+		// OpenRouter is unwired; wafer_anthropic trails wafer.
 		{Provider: providers.ProviderWafer, UpstreamID: "DeepSeek-V4-Flash-0731-Fast",
 			Price: Pricing{InputUSDPer1M: 0.280, OutputUSDPer1M: 0.560, CacheReadMultiplier: 0.07 / 0.280}},
 		{Provider: providers.ProviderWaferAnthropic, UpstreamID: "DeepSeek-V4-Flash-0731-Fast",
 			Price: Pricing{InputUSDPer1M: 0.280, OutputUSDPer1M: 0.560, CacheReadMultiplier: 0.07 / 0.280}},
 	}},
 	// V4.1-Flash: 552B MoE (8B active prefill / 16B decode), natively
-	// multimodal, 1M context. Fireworks serverless is primary; OpenRouter
-	// trails as the self-hoster fallback.
+	// multimodal, 1M context. Makora replaces its retired V4 Flash endpoint;
+	// Fireworks and OpenRouter remain fallbacks.
 	{ID: "deepseek/deepseek-v4.1-flash", Source: SourceOpenSource, Tier: TierLow, ContextWindow: 1_048_576, Providers: []ProviderBinding{
+		{Provider: providers.ProviderMakora, UpstreamID: "deepseek-ai/DeepSeek-V4.1-Flash",
+			Price: Pricing{InputUSDPer1M: 0.200, OutputUSDPer1M: 0.990, CacheReadMultiplier: 0.006 / 0.200}},
 		{Provider: providers.ProviderFireworks, UpstreamID: "accounts/fireworks/models/deepseek-v4p1-flash",
 			Price: Pricing{InputUSDPer1M: 0.220, OutputUSDPer1M: 0.660, CacheReadMultiplier: 0.007 / 0.220}},
 		{Provider: providers.ProviderOpenRouter, Price: Pricing{InputUSDPer1M: 0.100, OutputUSDPer1M: 0.500, CacheReadMultiplier: 0.10}},

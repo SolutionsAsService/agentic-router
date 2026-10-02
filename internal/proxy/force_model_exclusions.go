@@ -50,10 +50,15 @@ func (s *Service) forcedModelBinding(ctx context.Context, model, provider string
 		return gatewayForcedBinding(model, gateways, s.customBindingsForRequest(ctx))
 	}
 	excluded := s.policyExcludedProviders(ctx)
-	if len(excluded) == 0 {
-		return provider, ""
-	}
 	bindings := s.servableBindings(model, provider)
+	if len(excluded) == 0 {
+		for _, binding := range bindings {
+			if binding == provider {
+				return provider, ""
+			}
+		}
+		return bindings[0], ""
+	}
 	permitted := make([]string, 0, len(bindings))
 	for _, b := range bindings {
 		if _, drop := excluded[b]; !drop {

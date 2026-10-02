@@ -89,7 +89,7 @@ func TestDecide_UsesNamedProviderBindings(t *testing.T) {
 	base := planner.Inputs{
 		Pin: sessionpin.Pin{
 			Provider:        providers.ProviderMakora,
-			Model:           "deepseek/deepseek-v4-flash",
+			Model:           "deepseek/deepseek-v4.1-flash",
 			LastTurnEndedAt: time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC),
 		},
 		Fresh: router.Decision{
@@ -98,20 +98,20 @@ func TestDecide_UsesNamedProviderBindings(t *testing.T) {
 		},
 		EstimatedInputTokens: 1_000_000,
 		AvailableModels: map[string]struct{}{
-			"deepseek/deepseek-v4-flash": {},
-			"qwen/qwen3-coder-next":      {},
+			"deepseek/deepseek-v4.1-flash": {},
+			"qwen/qwen3-coder-next":        {},
 		},
 	}
 
 	makoraPin := planner.Decide(base, planner.EVConfig{ExpectedRemainingTurns: 3})
-	assert.InDelta(t, -0.03696, makoraPin.ExpectedSavingsUSD, 1e-9)
+	assert.InDelta(t, -0.087, makoraPin.ExpectedSavingsUSD, 1e-9)
 	assert.False(t, makoraPin.PinPriceFallback)
 	assert.False(t, makoraPin.FreshPriceFallback)
 
 	openRouterPinInput := base
 	openRouterPinInput.Pin.Provider = providers.ProviderOpenRouter
 	openRouterPin := planner.Decide(openRouterPinInput, planner.EVConfig{ExpectedRemainingTurns: 3})
-	assert.InDelta(t, -0.063, openRouterPin.ExpectedSavingsUSD, 1e-9)
+	assert.InDelta(t, -0.075, openRouterPin.ExpectedSavingsUSD, 1e-9)
 	assert.NotEqual(t, makoraPin.ExpectedSavingsUSD, openRouterPin.ExpectedSavingsUSD,
 		"the pin's named provider must affect its cache economics")
 }
