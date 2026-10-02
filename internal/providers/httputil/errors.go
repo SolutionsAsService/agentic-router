@@ -8,6 +8,8 @@ import (
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/requestcontext"
+
+	"github.com/tidwall/gjson"
 )
 
 // ReadCapped buffers up to limit bytes from r, then drains (without retaining)
@@ -52,14 +54,19 @@ func (c HeaderCapture) WriteHeader(int) {}
 // ERROR except 429 (routine rate-limit signal handled via failover), which
 // logs at WARN.
 //
+// When content logging is disallowed the raw body_preview is dropped, but the
+// provider's structured error type is kept as upstream_error_type. The error
+// message is not kept because providers can echo request content into it.
+//
 // ctx is load-bearing: on the global logger the body was written but not
 // joinable to the request, so filtering by session never surfaced it.
 func LogUpstreamStatus(ctx context.Context, msg string, status int, attrs ...any) {
 	log := observability.FromContext(ctx)
 	if !requestcontext.ContentLoggingAllowed(ctx) {
-		filtered := make([]any, 0, len(attrs))
+		filtered := make([]any, 0, len(attrs)+2)
 		for i := 0; i+1 < len(attrs); i += 2 {
 			if key, _ := attrs[i].(string); key == "body_preview" {
+				filtered = append(filtered, upstreamErrorTypeAttrs(attrs[i+1].(string))...)
 				continue
 			}
 			filtered = append(filtered, attrs[i], attrs[i+1])
@@ -72,6 +79,21 @@ func LogUpstreamStatus(ctx context.Context, msg string, status int, attrs ...any
 		return
 	}
 	log.Warn(msg, merged...)
+}
+
+// upstreamErrorTypeAttrs extracts the error category from a JSON provider
+// error envelope ({"error":{"type"}} or top-level "type"). Non-JSON bodies
+// yield nothing.
+func upstreamErrorTypeAttrs(body string) []any {
+	if !gjson.Valid(body) {
+		return nil
+	}
+	for _, path := range []string{"error.type", "type"} {
+		if r := gjson.Get(body, path); r.Type == gjson.String && r.Str != "error" {
+			return []any{"upstream_error_type", r.Str}
+		}
+	}
+	return nil
 }
 
 // WritePassthroughError streams up to 1KB of resp.Body to w, logs via

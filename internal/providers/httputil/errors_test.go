@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -101,4 +102,48 @@ func TestLogUpstreamStatus_KeepsBodyPreviewWhenContentLoggingAllowed(t *testing.
 	LogUpstreamStatus(ctx, "upstream failed", http.StatusBadRequest, "body_preview", "err-echo")
 
 	assert.Contains(t, buf.String(), "err-echo")
+}
+
+func TestLogUpstreamStatus_KeepsOnlyErrorTypeWhenContentLoggingDisallowed(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantType string
+	}{
+		{
+			name:     "anthropic nested envelope",
+			body:     `{"type":"error","error":{"type":"invalid_request_error","message":"echoed secret-fragment"}}`,
+			wantType: "invalid_request_error",
+		},
+		{
+			name: "top-level message only",
+			body: `{"message":"echoed secret-fragment","request_id":"x"}`,
+		},
+		{
+			name: "non-json body",
+			body: `echoed secret-fragment`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf strings.Builder
+			log := slog.New(slog.NewJSONHandler(&buf, nil))
+			ctx := observability.WithLogger(
+				requestcontext.WithContentLogging(context.Background(), false),
+				log,
+			)
+
+			LogUpstreamStatus(ctx, "upstream failed", http.StatusBadRequest, "body_preview", tc.body)
+
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal([]byte(buf.String()), &entry))
+			assert.NotContains(t, buf.String(), "secret-fragment")
+			assert.NotContains(t, entry, "body_preview")
+			if tc.wantType == "" {
+				assert.NotContains(t, entry, "upstream_error_type")
+			} else {
+				assert.Equal(t, tc.wantType, entry["upstream_error_type"])
+			}
+		})
+	}
 }
