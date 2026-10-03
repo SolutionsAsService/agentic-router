@@ -41,6 +41,12 @@ func TestCodexFailover_EligibilityAndSuppression(t *testing.T) {
 	require.True(t, servedOnCodexSubscription(ctx),
 		"a resolved ChatGPT OAuth token + account id must report servedOnCodexSubscription")
 
+	t.Run("out-of-roster catalog model resolves Codex OAuth", func(t *testing.T) {
+		resolved := resolveAndInjectCredentials(codexSubscriptionTestCtx(), providers.ProviderOpenAI, "gpt-6-astra", http.Header{})
+		assert.True(t, servedOnCodexSubscription(resolved),
+			"selected OpenAI catalog models outside the automatic Codex roster must get a subscription funding attempt")
+	})
+
 	t.Run("no fallback key: not eligible", func(t *testing.T) {
 		s := &Service{} // no deployment OpenAI key, no BYOK
 		assert.False(t, s.openaiFallbackKeyAvailable(ctx),
@@ -111,6 +117,36 @@ func TestCodexQuotaExhaustion_Classification(t *testing.T) {
 		_, exhausted := codexQuotaExhaustion(context.DeadlineExceeded)
 		assert.False(t, exhausted, "a transport error says nothing about the plan's quota")
 	})
+}
+
+// TestCodexSubscriptionModelRejected pins the third retry trigger: only an
+// explicit model-availability rejection falls back to the API credential.
+func TestCodexSubscriptionModelRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "explicit model not found",
+			err: &providers.UpstreamErrorResponse{Status: http.StatusNotFound,
+				Body: []byte(`{"error":{"type":"invalid_request_error","code":"model_not_found","param":"model"}}`)},
+			want: true,
+		},
+		{
+			name: "invalid model parameter",
+			err: &providers.UpstreamErrorResponse{Status: http.StatusBadRequest,
+				Body: []byte(`{"error":{"type":"invalid_request_error","param":"model"}}`)},
+			want: true,
+		},
+		{name: "generic bad request", err: &providers.UpstreamErrorResponse{Status: http.StatusBadRequest, Body: []byte(`{"error":{"type":"invalid_request_error"}}`)}},
+		{name: "policy rejection", err: &providers.UpstreamErrorResponse{Status: http.StatusForbidden, Body: []byte(`{"error":{"code":"unsupported_model"}}`)}},
+		{name: "unstructured not found", err: &providers.UpstreamErrorResponse{Status: http.StatusNotFound, Body: []byte(`not found`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, codexSubscriptionModelRejected(tc.err))
+		})
+	}
 }
 
 // TestCodexOAuthCredentialRejected covers the second retry trigger: a rejected

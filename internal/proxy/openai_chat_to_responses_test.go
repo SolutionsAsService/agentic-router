@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"weave-os/router/internal/auth"
 	"weave-os/router/internal/flags"
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/providers"
@@ -202,6 +203,40 @@ func TestService_ProxyOpenAIChatCompletion_FallsBackWhenEndpointLacksResponses(t
 		body := rec.Body.String()
 		assert.NotContains(t, body, "Unknown path", "the failed Responses probe must not reach the client")
 		assert.Contains(t, body, `"content":"ok"`)
+	}
+}
+
+func TestService_ProxyOpenAIChatCompletion_UsesBYOKBaseForResponsesCapability(t *testing.T) {
+	provider := &fakeProvider{
+		proxyErrByEndpoint: map[providers.Endpoint]error{
+			providers.EndpointResponses: &providers.UpstreamErrorResponse{
+				Status: http.StatusNotFound,
+				Body:   []byte(`{"error":{"message":"Unknown path /v1/responses"}}`),
+			},
+		},
+		proxyResponse: func(w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		},
+	}
+	svc := openAIChatService(provider, "gpt-5.6-luna")
+	ctx := context.WithValue(context.Background(), proxy.ExternalAPIKeysContextKey{}, []*auth.ExternalAPIKey{{
+		Provider:  providers.ProviderOpenAI,
+		Plaintext: []byte("synthetic-key"),
+		BaseURL:   "https://tenant.example.invalid/v1",
+	}})
+
+	for _, want := range [][]providers.Endpoint{
+		{providers.EndpointResponses, providers.EndpointChatCompletions},
+		{providers.EndpointChatCompletions},
+	} {
+		provider.proxyEndpoints = nil
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatToolTurnBody))
+		require.NoError(t, svc.ProxyOpenAIChatCompletion(ctx, []byte(chatToolTurnBody), rec, req))
+		assert.Equal(t, want, provider.proxyEndpoints,
+			"Responses capability memoization must use the resolved BYOK base URL")
 	}
 }
 

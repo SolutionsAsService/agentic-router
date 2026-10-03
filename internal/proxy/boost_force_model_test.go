@@ -83,8 +83,11 @@ func TestBoostLinkedFirstHonorsForcedModel(t *testing.T) {
 			if tc.provider == providers.ProviderOpenAI {
 				assert.Equal(t, "high", gjson.GetBytes(upstream.proxyBodies[0], "reasoning.effort").String())
 			}
-			if upstream.proxyCreds[0] != nil {
-				assert.False(t, upstream.proxyCreds[0].OAuth, "uncovered models must use infrastructure credentials")
+			if tc.provider == providers.ProviderOpenAI {
+				require.NotNil(t, upstream.proxyCreds[0])
+				assert.True(t, upstream.proxyCreds[0].OAuth, "an out-of-roster forced model must try the linked subscription first")
+			} else if upstream.proxyCreds[0] != nil {
+				assert.False(t, upstream.proxyCreds[0].OAuth, "a model outside the linked provider must use infrastructure credentials")
 			}
 			assert.NotContains(t, recorder.Body.String(), "could not be served")
 			assert.Equal(t, http.StatusOK, recorder.Code)

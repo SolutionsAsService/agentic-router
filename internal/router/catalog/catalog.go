@@ -217,6 +217,10 @@ type Model struct {
 	// instead of reasoning_content; the Anthropic translator reroutes a
 	// leading <think> block into Anthropic thinking. Default false.
 	ThinkTagReasoning bool
+	// CodexSubscriptionFallback explicitly permits trying a Codex subscription
+	// for this model outside the native Codex automatic roster. Unsupported
+	// targets must fall back to the selected model's API credential.
+	CodexSubscriptionFallback bool
 	// Providers is the ordered fallback list. First binding whose
 	// Provider name is in the available set wins. Must be non-empty.
 	Providers []ProviderBinding
@@ -460,7 +464,7 @@ var Models = []Model{
 			LongContext: &LongContextPricing{ThresholdTokens: 272_000, InputUSDPer1M: 16.00, OutputUSDPer1M: 60.00, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10},
 		}},
 	}},
-	{ID: "gpt-6-astra", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 1_050_000, Providers: []ProviderBinding{
+	{ID: "gpt-6-astra", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 1_050_000, CodexSubscriptionFallback: true, Providers: []ProviderBinding{
 		{Provider: providers.ProviderOpenAI, Price: Pricing{
 			InputUSDPer1M: 10.00, OutputUSDPer1M: 50.00, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10,
 			LongContext: &LongContextPricing{ThresholdTokens: 272_000, InputUSDPer1M: 20.00, OutputUSDPer1M: 75.00, CacheWriteMultiplier: 1.25, CacheReadMultiplier: 0.10},

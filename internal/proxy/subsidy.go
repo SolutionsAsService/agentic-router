@@ -28,6 +28,10 @@ func CodexSubscriptionCoversModel(model string) bool {
 	return requestcontext.CodexSubscriptionCoversModel(model)
 }
 
+func codexSubscriptionCanAttemptModel(model string) bool {
+	return requestcontext.CodexSubscriptionCanAttemptModel(model)
+}
+
 func codexSubscriptionCoversModel(model string) bool {
 	return CodexSubscriptionCoversModel(model)
 }

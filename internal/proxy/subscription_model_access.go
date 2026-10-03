@@ -43,8 +43,12 @@ func (a *subscriptionModelAccess) cache() *lru.Cache[subscriptionModelKey, time.
 }
 
 func (a *subscriptionModelAccess) key(token []byte, model string) subscriptionModelKey {
+	return a.keyForProvider(token, "", model)
+}
+
+func (a *subscriptionModelAccess) keyForProvider(token []byte, provider, model string) subscriptionModelKey {
 	a.cache()
-	return subscriptionModelKey{token: maphash.Bytes(a.seed, token), model: router.StripDateSuffix(model)}
+	return subscriptionModelKey{token: maphash.Bytes(a.seed, token), provider: provider, model: router.StripDateSuffix(model)}
 }
 
 func (a *subscriptionModelAccess) managedKey(owner, account, provider, model string) subscriptionModelKey {
@@ -52,7 +56,11 @@ func (a *subscriptionModelAccess) managedKey(owner, account, provider, model str
 }
 
 func (a *subscriptionModelAccess) denied(token []byte, model string, now time.Time) bool {
-	until, ok := a.cache().Get(a.key(token, model))
+	return a.deniedForProvider(token, "", model, now)
+}
+
+func (a *subscriptionModelAccess) deniedForProvider(token []byte, provider, model string, now time.Time) bool {
+	until, ok := a.cache().Get(a.keyForProvider(token, provider, model))
 	return ok && now.Before(until)
 }
 
@@ -87,10 +95,20 @@ func anthropicSubscriptionModelUnavailable(model string) error {
 
 func (s *Service) recordSubscriptionModelRejection(ctx context.Context, provider, model string, err error) {
 	creds := CredentialsFromContext(ctx)
-	if provider != providers.ProviderAnthropic || creds == nil || !creds.OAuth || len(creds.APIKey) == 0 || !anthropicSubscriptionModelRejected(err) {
+	if creds == nil || !creds.OAuth || len(creds.APIKey) == 0 {
 		return
 	}
-	s.subscriptionModels.cache().Add(s.subscriptionModels.key(creds.APIKey, model), s.clockNow().Add(subscriptionModelDenialTTL))
+	until := s.clockNow().Add(subscriptionModelDenialTTL)
+	switch provider {
+	case providers.ProviderAnthropic:
+		if anthropicSubscriptionModelRejected(err) {
+			s.subscriptionModels.cache().Add(s.subscriptionModels.key(creds.APIKey, model), until)
+		}
+	case providers.ProviderOpenAI:
+		if len(creds.AccountID) > 0 && codexSubscriptionModelRejected(err) {
+			s.subscriptionModels.cache().Add(s.subscriptionModels.keyForProvider(creds.APIKey, provider, model), until)
+		}
+	}
 }
 
 type suppressClaudeModelContextKey struct{}
@@ -104,6 +122,11 @@ func claudeModelSuppressed(ctx context.Context, model string) bool {
 func (s *Service) resolveCredentials(ctx context.Context, provider, model string, headers http.Header) context.Context {
 	resolved := resolveAndInjectCredentials(ctx, provider, model, headers)
 	creds := CredentialsFromContext(resolved)
+	if provider == providers.ProviderOpenAI && creds != nil && creds.OAuth && len(creds.AccountID) > 0 &&
+		!paidFallbackForbidden(ctx) && s.openaiFallbackKeyAvailable(ctx) &&
+		s.subscriptionModels.deniedForProvider(creds.APIKey, provider, model, s.clockNow()) {
+		return resolveAndInjectCredentials(withSuppressedCodexModel(resolved, model), provider, model, headers)
+	}
 	if provider != providers.ProviderAnthropic || creds == nil || !creds.OAuth ||
 		paidFallbackForbidden(ctx) || !s.anthropicFallbackKeyAvailable(ctx) ||
 		!s.subscriptionModels.denied(creds.APIKey, model, s.clockNow()) {

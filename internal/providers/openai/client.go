@@ -271,8 +271,11 @@ func (c *Client) Proxy(ctx context.Context, decision router.Decision, prep provi
 	// that happens to resolve a Codex credential never hits the Codex
 	// /responses endpoint (Responses schema only).
 	codexCreds := codexSubscriptionCreds(ctx)
-	if codexCreds != nil && !requestcontext.CodexSubscriptionCoversModel(decision.Model) {
-		return fmt.Errorf("refusing Codex subscription credential for infrastructure model %q", decision.Model)
+	if codexCreds != nil && prep.Endpoint != providers.EndpointResponses {
+		return fmt.Errorf("Codex subscription credentials require a Responses endpoint")
+	}
+	if codexCreds != nil && !requestcontext.CodexSubscriptionCanAttemptModel(decision.Model) {
+		return fmt.Errorf("refusing Codex subscription credential for model without approved Codex funding eligibility %q", decision.Model)
 	}
 	useCodex := codexCreds != nil && prep.Endpoint == providers.EndpointResponses
 	// A BYOK key may point at a customer-hosted OpenAI-compatible endpoint; the

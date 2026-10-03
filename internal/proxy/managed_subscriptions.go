@@ -22,8 +22,9 @@ import (
 type ManagedSubscriptionProvidersContextKey struct{}
 
 // ManagedSubscriptionEnrollmentUnavailableContextKey marks a request whose
-// enrollment snapshot could not be loaded. Control-plane handlers remain
-// available, while inference fails closed before any paid upstream dispatch.
+// enrollment snapshot could not be loaded. Codex OpenAI turns may use their
+// configured API credential when paid fallback is permitted; other subscription
+// lanes and subscription-only requests fail closed.
 type ManagedSubscriptionEnrollmentUnavailableContextKey struct{}
 
 // ManagedSubscriptionUsageContextKey carries per-request billing attribution.
@@ -75,7 +76,7 @@ func managedSubscriptionProviderFromUpstream(provider, model string) (subscripti
 	case providers.ProviderAnthropic:
 		return subscriptions.ProviderClaude, true
 	case providers.ProviderOpenAI:
-		if codexSubscriptionCoversModel(model) {
+		if codexSubscriptionCanAttemptModel(model) {
 			return subscriptions.ProviderCodex, true
 		}
 	}
@@ -92,6 +93,9 @@ func managedSubscriptionEnrolled(ctx context.Context, provider subscriptions.Pro
 }
 
 func managedSubscriptionCanServe(ctx context.Context, provider, model string) bool {
+	if provider == providers.ProviderOpenAI && codexChatEndpoint(ctx) {
+		return false
+	}
 	poolProvider, eligible := managedSubscriptionProviderFromUpstream(provider, model)
 	return eligible && managedSubscriptionEnrolled(ctx, poolProvider)
 }
@@ -161,14 +165,22 @@ func (s *Service) costNeutralSubscriptionServed(ctx context.Context) bool {
 
 func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model string) (context.Context, subscriptions.Lease, bool, error) {
 	poolProvider, eligible := managedSubscriptionProviderFromUpstream(provider, model)
-	if !eligible || s.managedSubscriptions == nil {
+	if !eligible || s.managedSubscriptions == nil || poolProvider == subscriptions.ProviderCodex && codexChatEndpoint(ctx) {
+		return ctx, subscriptions.Lease{}, false, nil
+	}
+	currentCredentials := CredentialsFromContext(ctx)
+	if currentCredentials != nil && currentCredentials.OAuth {
 		return ctx, subscriptions.Lease{}, false, nil
 	}
 	if managedSubscriptionEnrollmentUnavailable(ctx) {
+		if poolProvider == subscriptions.ProviderCodex && !paidFallbackForbidden(ctx) && s.managedProviderFallbackAvailable(ctx, poolProvider) {
+			observability.FromContext(ctx).Warn("Managed subscription enrollment unavailable; using the configured provider credential",
+				"provider", poolProvider, "model", model)
+			return ctx, subscriptions.Lease{}, false, nil
+		}
 		return ctx, subscriptions.Lease{}, true, ErrSubscriptionPoolUnavailable
 	}
-	currentCredentials := CredentialsFromContext(ctx)
-	if !managedSubscriptionEnrolled(ctx, poolProvider) || (currentCredentials != nil && currentCredentials.OAuth) {
+	if !managedSubscriptionEnrolled(ctx, poolProvider) {
 		return ctx, subscriptions.Lease{}, false, nil
 	}
 	if subscriptionPlanAwareRoutingEnabled(ctx) && managedSubscriptionPlansAllExhausted(ctx) {
@@ -210,9 +222,17 @@ func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model 
 					break
 				}
 				if len(rejected) > 0 {
+					if poolProvider == subscriptions.ProviderCodex {
+						return ctx, subscriptions.Lease{}, true, codexSubscriptionModelUnavailable()
+					}
 					return ctx, subscriptions.Lease{}, true, anthropicSubscriptionModelUnavailable(model)
 				}
 				return ctx, subscriptions.Lease{}, true, ErrSubscriptionPoolExhausted
+			}
+			if poolProvider == subscriptions.ProviderCodex && !paidFallbackForbidden(ctx) && s.managedProviderFallbackAvailable(ctx, poolProvider) {
+				observability.FromContext(ctx).Warn("Managed subscription lease failed; using the configured provider credential",
+					"provider", poolProvider, "model", model, "err", err)
+				return ctx, subscriptions.Lease{}, false, nil
 			}
 			return ctx, subscriptions.Lease{}, present, errors.Join(ErrSubscriptionPoolUnavailable, err)
 		}
@@ -224,6 +244,9 @@ func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model 
 			break
 		}
 		if !present && len(rejected) > 0 {
+			if poolProvider == subscriptions.ProviderCodex {
+				return ctx, subscriptions.Lease{}, true, codexSubscriptionModelUnavailable()
+			}
 			return ctx, subscriptions.Lease{}, true, anthropicSubscriptionModelUnavailable(model)
 		}
 		if !present {
@@ -264,6 +287,9 @@ func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model 
 			if lastResortOverageIndex >= 0 {
 				useLastResortOverage()
 				break
+			}
+			if poolProvider == subscriptions.ProviderCodex {
+				return ctx, subscriptions.Lease{}, true, codexSubscriptionModelUnavailable()
 			}
 			return ctx, subscriptions.Lease{}, true, anthropicSubscriptionModelUnavailable(model)
 		}
@@ -325,6 +351,12 @@ func (s *Service) recordManagedSubscriptionFailure(ctx context.Context, provider
 	status := upstreamStatus(attemptErr)
 	owner := subscriptionOwnerFromContext(ctx)
 	if provider == providers.ProviderAnthropic && anthropicSubscriptionModelRejected(attemptErr) {
+		s.subscriptionModels.denyManaged(owner.PoolKey(), lease.AccountID, provider, model, s.clockNow().Add(subscriptionModelDenialTTL))
+		observability.FromContext(ctx).Warn("Managed subscription account cannot access model",
+			"provider", poolProvider, "account_id", lease.AccountID, "model", model)
+		return true
+	}
+	if provider == providers.ProviderOpenAI && codexSubscriptionModelRejected(attemptErr) {
 		s.subscriptionModels.denyManaged(owner.PoolKey(), lease.AccountID, provider, model, s.clockNow().Add(subscriptionModelDenialTTL))
 		observability.FromContext(ctx).Warn("Managed subscription account cannot access model",
 			"provider", poolProvider, "account_id", lease.AccountID, "model", model)

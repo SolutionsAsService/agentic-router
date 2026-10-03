@@ -78,6 +78,12 @@ func managedSubscriptionContext(provider auth.SubscriptionProvider) context.Cont
 	return WithManagedSubscriptionUsage(ctx)
 }
 
+func TestManagedSubscriptionMapsOutOfRosterOpenAIModelToCodex(t *testing.T) {
+	provider, ok := managedSubscriptionProviderFromUpstream(providers.ProviderOpenAI, "gpt-6-astra")
+	require.True(t, ok, "an out-of-roster OpenAI catalog model may attempt managed Codex funding")
+	assert.Equal(t, subscriptions.ProviderCodex, provider)
+}
+
 func TestDispatchWithFallbackUsesOnlyMatchingManagedProviderFamily(t *testing.T) {
 	leaser := &scriptedSubscriptionLeaser{leases: []subscriptions.Lease{{AccountID: "opaque-codex", AccessToken: "token-codex"}}}
 	client := &fakeClient{name: providers.ProviderOpenAI, outcomes: []fakeOutcome{{writeBytes: []byte("served")}}}

@@ -78,6 +78,45 @@ func (s *Service) codexSubscriptionExhausted(ctx context.Context, headers http.H
 	return ok && snap.Exhausted()
 }
 
+// codexSubscriptionModelRejected reports an explicit model-availability
+// rejection from the Codex backend. Generic 400/403 responses can reflect
+// request or account policy and must not trigger paid fallback.
+func codexSubscriptionModelRejected(err error) bool {
+	var buffered *providers.UpstreamErrorResponse
+	if !errors.As(err, &buffered) || (buffered.Status != http.StatusBadRequest && buffered.Status != http.StatusNotFound) {
+		return false
+	}
+	var errorEnvelope struct {
+		Error struct {
+			Code  string `json:"code"`
+			Type  string `json:"type"`
+			Param string `json:"param"`
+		} `json:"error"`
+	}
+	if jsonErr := json.Unmarshal(buffered.Body, &errorEnvelope); jsonErr != nil {
+		return false
+	}
+	switch errorEnvelope.Error.Code {
+	case "model_not_found", "unsupported_model", "model_not_available":
+		return true
+	}
+	return errorEnvelope.Error.Param == "model" && errorEnvelope.Error.Type == "invalid_request_error"
+}
+
+// codexSubscriptionModelUnavailable makes a cached pool denial look like the
+// structured Codex model error so the same bounded API-credential fallback runs.
+func codexSubscriptionModelUnavailable() error {
+	body, _ := json.Marshal(map[string]any{
+		"error": map[string]string{
+			"type":    "invalid_request_error",
+			"code":    "model_not_found",
+			"param":   "model",
+			"message": "The selected model is unavailable to this subscription.",
+		},
+	})
+	return &providers.UpstreamErrorResponse{Status: http.StatusNotFound, Body: body}
+}
+
 // codexOAuthCredentialRejected reports whether err is a buffered OpenAI 401/403
 // — a rejected or expired ChatGPT OAuth token, which the Weave-key retry can
 // still serve. Narrower than treating every 403 as credential-related would be

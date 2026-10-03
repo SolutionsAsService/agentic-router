@@ -178,3 +178,38 @@ func TestService_ProxyMessages_HandoverSwitchToOpenAIEmitsResponses(t *testing.T
 	assert.Equal(t, "cached answer", gjson.GetBytes(rec.Body.Bytes(), "content.0.text").String(),
 		"the client must still get an Anthropic message")
 }
+
+func TestService_ProxyOpenAIChatCompletion_HandoverUsesResponsesEndpoint(t *testing.T) {
+	store := newFakePinStore()
+	store.hasPin = true
+	store.pin = sessionpin.Pin{
+		Provider:        providers.ProviderAnthropic,
+		Model:           "claude-opus-4-7",
+		Reason:          "cluster:v0.2",
+		PinnedUntil:     time.Now().Add(time.Hour),
+		LastInputTokens: 5000,
+		LastTurnEndedAt: time.Now().Add(-30 * time.Second),
+	}
+	openAI := &fakeProvider{proxyResponse: responsesTextUpstream}
+	fr := &fakeRouter{decision: router.Decision{
+		Provider: providers.ProviderOpenAI, Model: "gpt-5.6-luna", Reason: "cluster:v0.2",
+	}}
+	summarizer := &fakeSummarizer{summary: "HANDOVER SUMMARY MARKER"}
+	svc := proxy.NewService(
+		fr,
+		map[string]providers.Client{
+			providers.ProviderAnthropic: &fakeProvider{},
+			providers.ProviderOpenAI:    openAI,
+		},
+		nil, false, nil, store, false, providers.ProviderOpenAI, "gpt-5.6-sol", nil,
+	).WithSummarizer(summarizer)
+	body := `{"model":"auto","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"` + strings.Repeat("aaaa ", 8000) + `"}],"tools":[{"type":"function","function":{"name":"noop","parameters":{"type":"object"}}}],"reasoning_effort":"medium"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+
+	require.NoError(t, svc.ProxyOpenAIChatCompletion(authedCtx(uuid.New().String()), []byte(body), rec, req))
+	require.Equal(t, int32(1), summarizer.calls.Load(), "the switch must invoke the summarizer")
+	require.Len(t, openAI.proxyEndpoints, 1)
+	assert.Equal(t, providers.EndpointResponses, openAI.proxyEndpoints[0])
+	assert.Contains(t, string(openAI.proxyBodies[0]), "HANDOVER SUMMARY MARKER")
+}

@@ -26,6 +26,33 @@ func codexCtx(token, accountID string) context.Context {
 	})
 }
 
+func TestProxy_CodexOutOfRosterModelPreservesSelectedWireID(t *testing.T) {
+	const model = "gpt-6-astra"
+	var receivedModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/responses", r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		receivedModel = gjson.GetBytes(body, "model").String()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\"}\\n\\n")
+	}))
+	defer upstream.Close()
+
+	client := NewClient("deployment-key", "https://api.openai.example.invalid")
+	client.SetCodexBaseURL(upstream.URL)
+	prepared := providers.PreparedRequest{
+		Body:     []byte(`{"model":"` + model + `","input":"hi","stream":true}`),
+		Endpoint: providers.EndpointResponses,
+		Headers:  make(http.Header),
+	}
+	err := client.Proxy(codexCtx("synthetic-codex-jwt", "synthetic-account"), router.Decision{
+		Model: model, Provider: providers.ProviderOpenAI,
+	}, prepared, httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.NoError(t, err)
+	assert.Equal(t, model, receivedModel)
+}
+
 func TestProxy_CodexLunaSubscriptionDispatch(t *testing.T) {
 	const model = "gpt-6-luna"
 	var receivedModel, receivedAccount, receivedAuth string
@@ -161,35 +188,28 @@ func TestProxy_CodexSubscriptionCredentialRejectsInfrastructureModel(t *testing.
 	assert.Contains(t, err.Error(), "refusing Codex subscription credential")
 }
 
-// TestProxy_CodexCredOnChatEndpointDoesNotMisroute guards the Bugbot finding:
-// the Codex backend only accepts the Responses schema, so a chat-completions
-// prep that happens to resolve a Codex credential must NOT be posted to the
-// Codex /responses endpoint. The switch is gated on EndpointResponses.
-func TestProxy_CodexCredOnChatEndpointDoesNotMisroute(t *testing.T) {
-	var gotPath, gotAccount string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAccount = r.Header.Get("ChatGPT-Account-ID")
+// TestProxy_CodexCredOnChatEndpointIsRejected guards the credential boundary:
+// ChatGPT OAuth is accepted only by the Codex Responses endpoint.
+func TestProxy_CodexCredOnChatEndpointIsRejected(t *testing.T) {
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	}))
 	defer upstream.Close()
 
 	c := NewClient("deployment-key", upstream.URL)
-	c.codexBaseURL = "https://chatgpt.example.invalid" // must NOT be used for a chat body
+	c.codexBaseURL = "https://chatgpt.example.invalid"
 
-	// EndpointChatCompletions (zero value) — a chat-shaped body.
 	prep := providers.PreparedRequest{Body: []byte(`{"model":"gpt-5.6-sol","messages":[]}`), Headers: make(http.Header)}
 	rec := httptest.NewRecorder()
 	clientReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(""))
 
 	ctx := codexCtx("eyJhbGciOiJ-codex-jwt", "acct-12345")
 	err := c.Proxy(ctx, router.Decision{Model: "gpt-5.6-sol", Provider: providers.ProviderOpenAI}, prep, rec, clientReq)
-	require.NoError(t, err)
-
-	assert.Equal(t, "/v1/chat/completions", gotPath,
-		"a chat-completions body must never be posted to the Codex /responses endpoint, even with a Codex credential")
-	assert.Empty(t, gotAccount, "the Codex account-id header must not be set on a non-Responses dispatch")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Codex subscription credentials require a Responses endpoint")
+	assert.Zero(t, requests, "Codex OAuth must never be sent to the public Chat Completions endpoint")
 }
 
 // TestProxy_NoCodexCredHitsOpenAI confirms the Codex switch is gated on the

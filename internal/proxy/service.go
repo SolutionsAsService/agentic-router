@@ -1579,6 +1579,51 @@ func codexSubscriptionSuppressed(ctx context.Context) bool {
 	return v
 }
 
+type suppressCodexModelContextKey struct{}
+
+func withSuppressedCodexModel(ctx context.Context, model string) context.Context {
+	previous, _ := ctx.Value(suppressCodexModelContextKey{}).(map[string]struct{})
+	models := make(map[string]struct{}, len(previous)+1)
+	for id := range previous {
+		models[id] = struct{}{}
+	}
+	models[router.StripDateSuffix(model)] = struct{}{}
+	return context.WithValue(ctx, suppressCodexModelContextKey{}, models)
+}
+
+func codexModelSuppressed(ctx context.Context, model string) bool {
+	models, _ := ctx.Value(suppressCodexModelContextKey{}).(map[string]struct{})
+	_, suppressed := models[router.StripDateSuffix(model)]
+	return suppressed
+}
+
+type codexChatEndpointContextKey struct{}
+
+func withCodexChatEndpoint(ctx context.Context) context.Context {
+	return context.WithValue(ctx, codexChatEndpointContextKey{}, true)
+}
+
+func codexChatEndpoint(ctx context.Context) bool {
+	v, _ := ctx.Value(codexChatEndpointContextKey{}).(bool)
+	return v
+}
+
+func (s *Service) avoidCodexOnChatEndpoint(ctx context.Context, provider, model string, endpointResponses bool, headers http.Header) (context.Context, error) {
+	if provider != providers.ProviderOpenAI || endpointResponses ||
+		subscriptionRoutingDisabledForRequest(ctx) || subscriptionFundingOutOfPlayForRequest(ctx) {
+		return ctx, nil
+	}
+	personalSubscription := servedOnCodexSubscription(resolveAndInjectCredentials(ctx, provider, model, headers))
+	managedSubscription := managedSubscriptionCanServe(ctx, provider, model)
+	if !personalSubscription && !managedSubscription {
+		return ctx, nil
+	}
+	if !s.openaiFallbackKeyAvailable(ctx) {
+		return nil, ErrCreditsExhaustedSubscriptionUnavailable
+	}
+	return withCodexChatEndpoint(ctx), nil
+}
+
 // servedOnCodexSubscription reports whether the resolved credential is the
 // caller's ChatGPT OAuth token (paired with an account id), i.e. the turn is
 // pinned to their Codex plan and has no other OpenAI binding to walk.
@@ -6049,9 +6094,9 @@ func (s *Service) hasOpenAIInfrastructureCredential(ctx context.Context, headers
 
 // excludeCodexOAuthOnlyModels keeps model eligibility aligned with credential
 // resolution. When ChatGPT OAuth is the only way OpenAI became eligible (or
-// billing forbids paid fallback), only the exact native
-// Codex family may select the OpenAI binding. Infrastructure-backed requests
-// retain the full catalog and route other OpenAI models normally.
+// billing forbids paid fallback), only the native Codex roster and explicitly
+// approved catalog fallback models may select the OpenAI binding. Other
+// infrastructure-backed models remain ineligible without a paid credential.
 func (s *Service) excludeCodexOAuthOnlyModels(
 	ctx context.Context,
 	headers http.Header,
@@ -6063,7 +6108,7 @@ func (s *Service) excludeCodexOAuthOnlyModels(
 		return excluded
 	}
 	for _, model := range catalog.Models {
-		if codexSubscriptionCoversModel(model.ID) {
+		if codexSubscriptionCanAttemptModel(model.ID) {
 			continue
 		}
 		// Match catalog binding resolution: the first enabled binding is the one
@@ -6086,8 +6131,9 @@ func (s *Service) excludeCodexOAuthOnlyModels(
 
 // resolveAndInjectCredentials resolves credentials for the selected provider
 // and model and stashes them on ctx. Claude OAuth applies to Anthropic models;
-// Codex OAuth applies only to the explicit native Codex model family. All other
-// selections fall through to BYOK, a client API key, or the deployment key.
+// Codex OAuth applies to the native Codex roster plus catalog-approved
+// subscription-first fallback models. Other selections fall through to BYOK,
+// a client API key, or the deployment key.
 //
 // Subscription-first lets a caller's own Claude subscription pay for Claude
 // turns. Native harnesses leave a sk-ant-oat- bearer in Authorization (or
@@ -6102,10 +6148,11 @@ func resolveAndInjectCredentials(ctx context.Context, provider, model string, he
 	routerKeyed := installationIDFromContext(ctx) != (uuid.UUID{})
 	// Skip subscription OAuth (fall through to BYOK / deployment key):
 	// exhausted (Anthropic-only, avoid re-429), toggle off (provider-wide), or
-	// an OpenAI-provider model outside the native Codex OAuth family.
+	// an OpenAI-provider model outside the native Codex roster and catalog
+	// exceptions.
 	subDisabled := subscriptionRoutingDisabledForRequest(ctx) || subscriptionFundingOutOfPlayForRequest(ctx)
 	suppressClaudeSub := claudeSubscriptionSuppressed(ctx) || subDisabled || claudeModelSuppressed(ctx, model)
-	suppressCodexSub := codexSubscriptionSuppressed(ctx) || subDisabled || !codexSubscriptionCoversModel(model)
+	suppressCodexSub := codexSubscriptionSuppressed(ctx) || codexModelSuppressed(ctx, model) || codexChatEndpoint(ctx) || subDisabled || !codexSubscriptionCanAttemptModel(model)
 	if provider == providers.ProviderAnthropic && !suppressClaudeSub {
 		if sub := subscriptionCredsFromToken(anthropicSubscriptionFromContext(ctx)); sub != nil {
 			return context.WithValue(ctx, CredentialsContextKey{}, sub)
@@ -6443,7 +6490,10 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 		return returnErr
 	}
 	if managedSubscriptionEnrollmentUnavailable(ctx) {
-		return ErrSubscriptionPoolUnavailable
+		codexToken, _ := presentSubscriptionTokens(ctx, r.Header)
+		if codexToken == "" && (paidFallbackForbidden(ctx) || !s.openaiFallbackKeyAvailable(ctx)) {
+			return ErrSubscriptionPoolUnavailable
+		}
 	}
 	ctx = requestcontext.WithContentLogging(ctx, s.effectiveCaptureMode(ctx) != CaptureOff)
 	ctx, err := s.checkUserMonthlySpendLimit(ctx, r.Header, r.URL.Path)
@@ -6902,7 +6952,27 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	if s.codexSubscriptionExhausted(ctx, r.Header) {
 		ctx = withSuppressedCodexSubscription(ctx)
 	}
-	ctx = s.resolveCredentials(ctx, decision.Provider, decision.Model, r.Header)
+	resolvedCtx := s.resolveCredentials(ctx, decision.Provider, decision.Model, r.Header)
+	responsesEndpointKey := EffectiveBaseURL(resolvedCtx, decision.Provider)
+	openAIResponsesEndpoint := responsesPassthrough
+	if !openAIResponsesEndpoint && decision.Provider == providers.ProviderOpenAI {
+		openAIResponsesEndpoint = translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
+			Provider:       decision.Provider,
+			Capabilities:   opts.Capabilities,
+			HasTools:       feats.HasTools,
+			ChatOnlyParams: env.RequiresChatCompletionsParams(opts.Capabilities),
+			Broad:          s.ResolveOpenAIResponsesBroad(ctx),
+		}) && !s.gatewayLacksResponses(responsesEndpointKey)
+	}
+	endpointCtx, endpointErr := s.avoidCodexOnChatEndpoint(ctx, decision.Provider, decision.Model, openAIResponsesEndpoint, r.Header)
+	if endpointErr != nil {
+		return endpointErr
+	}
+	if codexChatEndpoint(endpointCtx) {
+		ctx = s.resolveCredentials(endpointCtx, decision.Provider, decision.Model, r.Header)
+	} else {
+		ctx = resolvedCtx
+	}
 	opts.FastMode = fastModeForAttempt(ctx, decision.Model, decision.Provider)
 	// fastServed tracks whether the most recent attempt went out on the fast
 	// tier so post-dispatch billing prices the winning attempt.
@@ -6955,18 +7025,8 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	// caller's original bytes serve it natively — preserving reasoning the chat
 	// projection drops. Skip when compaction or a handover rewrote the envelope
 	// (stale bytes); pre-routing readers of responsesPassthrough already ran.
-	responsesEndpointKey := EffectiveBaseURL(ctx, decision.Provider)
 	promotedToResponses := false
-	if !responsesPassthrough && !routeRes.Handover.Invoked &&
-		decision.Provider == providers.ProviderOpenAI &&
-		translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
-			Provider:       decision.Provider,
-			Capabilities:   opts.Capabilities,
-			HasTools:       feats.HasTools,
-			ChatOnlyParams: env.RequiresChatCompletionsParams(opts.Capabilities),
-			Broad:          s.ResolveOpenAIResponsesBroad(ctx),
-		}) &&
-		!s.gatewayLacksResponses(responsesEndpointKey) {
+	if !responsesPassthrough && !routeRes.Handover.Invoked && openAIResponsesEndpoint {
 		if native, ok := ctx.Value(nativeResponsesBodyContextKey{}).([]byte); ok && len(native) > 0 {
 			responsesBody = native
 			responsesPassthrough = true
@@ -7082,16 +7142,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	}
 
 	// Chat caller: emit onto Responses and translate back; skipped for Responses-ingress (handled above).
-	translateToResponses := !isResponses && !responsesPassthrough &&
-		decision.Provider == providers.ProviderOpenAI &&
-		translate.UseOpenAIResponsesAPI(translate.ResponsesRoute{
-			Provider:       decision.Provider,
-			Capabilities:   opts.Capabilities,
-			HasTools:       feats.HasTools,
-			ChatOnlyParams: env.RequiresChatCompletionsParams(opts.Capabilities),
-			Broad:          s.ResolveOpenAIResponsesBroad(ctx),
-		}) &&
-		!s.gatewayLacksResponses(responsesEndpointKey)
+	translateToResponses := !isResponses && !responsesPassthrough && openAIResponsesEndpoint
 	// nil when the request has no tools; the translator treats nil as syntax-check-only.
 	toolValidator := env.ToolValidator()
 
@@ -7314,8 +7365,11 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 				}
 				// Retried once pre-commit on chat/completions; memoized for later turns.
 				// A native attempt also needs promotedToResponses — a Codex passthrough has none.
+				// A structured model rejection is about the model, not the endpoint;
+				// treating its 404 as "no Responses API" would memoize a false negative.
 				if err == nil || surface == surfaceChat ||
-					committed(preludeBuf) || !providers.IsUpstreamResponsesUnsupported(err) {
+					committed(preludeBuf) || !providers.IsUpstreamResponsesUnsupported(err) ||
+					codexSubscriptionModelRejected(err) {
 					return err
 				}
 				if surface == surfaceResponsesNative {
@@ -7589,7 +7643,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	codexFailoverUsed := false
 	codexRetryRan := false
 	if codexRetryViable && proxyErr != nil && !preludeBuf.Committed() &&
-		(providers.IsRetryable(proxyErr) || codexOAuthCredentialRejected(proxyErr)) {
+		(providers.IsRetryable(proxyErr) || codexOAuthCredentialRejected(proxyErr) || codexSubscriptionModelRejected(proxyErr)) {
 		// Remember the plan is spent so later turns suppress the token pre-dispatch
 		// instead of buying another rejected round-trip per turn until it resets.
 		s.recordCodexQuotaExhaustion(ctx, r.Header, proxyErr)
