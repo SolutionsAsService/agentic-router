@@ -167,7 +167,7 @@ for response_model in claude-sonnet-4-5 deepseek/deepseek-v4-pro; do
   out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
     WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
     render "$c/cc.sh" "$c/cache" "file://$upstream" claude-sonnet-4-5 "$c/transcript.jsonl")"
-  check_contains "$response_model transcript does not verify routing" "$out" "routing unverified"
+  check_not_contains "$response_model does not show a routing warning" "$out" "routing unverified"
   check_contains "$response_model is labeled as transcript information" "$out" "transcript model: $response_model"
   check_contains "$response_model preserves transcript token totals" "$out" "1.0k in / 200 out / 3.0k cache read"
   check_not_contains "$response_model does not claim realized savings" "$out" "saved "
@@ -181,7 +181,7 @@ JSONL
 out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
   WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
   render "$c/cc.sh" "$c/cache" "file://$upstream" claude-sonnet-4-5 "$c/pin.jsonl")"
-check_contains "historical pin does not verify routing" "$out" "routing unverified"
+check_not_contains "historical pin does not show a routing warning" "$out" "routing unverified"
 check_contains "historical pin is labeled as historical" "$out" "last pin: claude-opus-4-7"
 check_contains "historical pin does not replace the latest transcript model" "$out" "transcript model: claude-sonnet-4-5"
 check_not_contains "historical pin does not claim an active force" "$out" "[forced]"
@@ -191,12 +191,12 @@ out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
   WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
   render "$c/cc.sh" "$c/cache" "file://$upstream" claude-sonnet-4-5 "$c/pin.jsonl")"
 check_contains "historical pin cannot mask a later failure" "$out" "last response failed"
-check_contains "failed response does not verify routing" "$out" "routing unverified"
+check_not_contains "failed response does not show a routing warning" "$out" "routing unverified"
 
 out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
   WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
   render "$c/cc.sh" "$c/cache" "file://$upstream" claude-sonnet-4-5 "$c/missing.jsonl")"
-check_contains "missing transcript does not verify routing" "$out" "routing unverified"
+check_not_contains "missing transcript does not show a routing warning" "$out" "routing unverified"
 check_contains "missing transcript labels the selected model" "$out" "selected: claude-sonnet-4-5"
 check_not_contains "missing transcript does not invent a response model" "$out" "transcript model:"
 
@@ -206,7 +206,7 @@ for transcript_state in empty malformed; do
   out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
     WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
     render "$c/cc.sh" "$c/cache" "file://$upstream" claude-sonnet-4-5 "$c/$transcript_state.jsonl")"
-  check_contains "$transcript_state transcript does not verify routing" "$out" "routing unverified"
+  check_not_contains "$transcript_state transcript does not show a routing warning" "$out" "routing unverified"
   check_not_contains "$transcript_state transcript does not invent a price comparison" "$out" "est. cost difference"
   check_not_contains "$transcript_state transcript does not invent a response model" "$out" "transcript model:"
 done
@@ -215,7 +215,7 @@ head -n 1 "$c/pin.jsonl" > "$c/ack.jsonl"
 out="$(WEAVE_STATUSLINE_UPDATE=0 WEAVE_ROUTER_KEY=rk_synthetic \
   WEAVE_ROUTER_BASE_URL="file://$c/display-settings.json" \
   render "$c/cc.sh" "$c/cache" "file://$upstream" claude-sonnet-4-5 "$c/ack.jsonl")"
-check_contains "control acknowledgement does not verify inference" "$out" "routing unverified"
+check_not_contains "control acknowledgement does not show a routing warning" "$out" "routing unverified"
 check_contains "control acknowledgement is not labeled as an inference response" "$out" "control acknowledgement"
 check_not_contains "control acknowledgement does not imply an active force" "$out" "[forced]"
 
@@ -248,7 +248,7 @@ for sentinel_model in '<synthetic>' weave-router; do
   out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" "$STALE_MODEL" "$c/sentinel.jsonl")"
   check_contains "$sentinel_model does not poison later inference estimates" "$out" "est. cost difference \$0.08"
   check_contains "$sentinel_model does not inflate inference token totals" "$out" "10.0k in / 2.0k out"
-  check_contains "$sentinel_model followed by inference still does not verify routing" "$out" "routing unverified"
+  check_not_contains "$sentinel_model followed by inference does not show a routing warning" "$out" "routing unverified"
 
   head -n 1 "$c/sentinel.jsonl" > "$c/sentinel-only.jsonl"
   out="$(WEAVE_STATUSLINE_UPDATE=0 render "$c/cc.sh" "$c/cache" "file://$upstream" "$STALE_MODEL" "$c/sentinel-only.jsonl")"
@@ -625,7 +625,7 @@ out="$(echo "{\"model\":{\"id\":\"$STALE_MODEL\"},\"transcript_path\":\"$transcr
     WEAVE_ROUTER_BASE_URL='' ANTHROPIC_BASE_URL='' WEAVE_ROUTER_KEY='' ANTHROPIC_CUSTOM_HEADERS='' \
     bash "$c/proj/.claude/cc-statusline.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
 check_contains "visible org still renders the statusline" "$out" "deepseek/deepseek-v4-pro"
-check_contains "successful display-settings fetch does not verify inference" "$out" "routing unverified"
+check_not_contains "successful display-settings fetch does not show a routing warning" "$out" "routing unverified"
 
 # A fresh hidden cache decides without any network access: the install points
 # at an unreachable endpoint, but the pre-seeded fresh cache blanks the

@@ -554,7 +554,7 @@ env var to make the setting editable.
 1. Run `npx @weave-os/router status --claude` to inspect the saved settings
    in the selected scope. Connectivity verifies the key, not inference.
 2. Run `claude` and send a prompt. The terminal shows
-   `WEAVE ROUTER · routing unverified · transcript model: <model>`.
+   `WEAVE ROUTER · transcript model: <model>`.
    Model names, token totals and pin acknowledgements come from the local
    transcript, which can also contain direct-provider responses or old sessions.
 3. Confirm a matching new inference request in the router's server-side
