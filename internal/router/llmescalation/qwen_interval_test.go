@@ -30,6 +30,10 @@ func TestRenderQwenIntervalUsesLastFiveCompletedTurns(t *testing.T) {
 	require.False(t, ready)
 	_, ready = llmescalation.RenderQwenInterval(messages, 12)
 	require.False(t, ready, "a shortened history must not be renumbered as a later window")
+
+	interval, ready = llmescalation.RenderQwenInterval(messages, 8)
+	require.True(t, ready, "turns the session did not record must not block judging")
+	require.Contains(t, interval, "The visible interval contains turns 5..9.")
 }
 
 func TestRenderQwenIntervalKeepsToolOutcomeWithNextResponse(t *testing.T) {
