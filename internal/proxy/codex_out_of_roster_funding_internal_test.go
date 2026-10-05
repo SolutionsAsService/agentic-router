@@ -258,3 +258,40 @@ func TestCodexOutOfRosterModel_ChatOnlyRequestWithoutAPICredentialRefusesBeforeD
 	assert.ErrorIs(t, err, ErrCreditsExhaustedSubscriptionUnavailable)
 	assert.Empty(t, client.attempts, "the Codex token must not be sent to Chat Completions without an API fallback")
 }
+
+// A spent linked Codex plan must settle as an ordinary metered turn: dispatched
+// on the Weave key, debited at notional cost, and never labeled
+// subscription-served in billing or telemetry.
+func TestLinkedFirstSpentManagedCodexPlanBillsAsMeteredTurn(t *testing.T) {
+	leaser := &scriptedSubscriptionLeaser{leases: []subscriptions.Lease{{
+		AccountID: "synthetic-account", AccessToken: "synthetic-managed-token", ProviderAccount: "synthetic-chatgpt-account",
+		State: auth.SubscriptionAccountStateActive,
+	}}, repeatLast: true}
+	client := &scriptedFundingClient{}
+	repo := &auxBillingRepo{}
+	svc := outOfRosterFundingService(client, "test", repo).WithManagedSubscriptions(leaser)
+
+	ctx := billing.WithSubscriptionOnly(managedSubscriptionContext(auth.SubscriptionProviderCodex), billing.SubscriptionOnlyLinkedFirst)
+	ctx = context.WithValue(ctx, ManagedSubscriptionPlanStatesContextKey{}, map[subscriptions.Provider]SubscriptionPlanState{
+		subscriptions.ProviderCodex: SubscriptionPlanStateExhausted,
+	})
+	ctx = context.WithValue(ctx, InstallationIDContextKey{}, "33333333-3333-3333-3333-333333333333")
+	ctx = outOfRosterBillingCtx(ctx)
+	body := `{"model":"` + outOfRosterCodexModel + `","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic"}]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+
+	require.NoError(t, svc.ProxyOpenAIResponses(ctx, []byte(body), httptest.NewRecorder(), req))
+
+	require.NotEmpty(t, client.attempts)
+	for _, attempt := range client.attempts {
+		assert.False(t, attempt.oauth, "a spent ChatGPT plan must never serve the turn")
+	}
+	assert.Empty(t, leaser.providers, "no ChatGPT seat may be leased")
+	assert.False(t, managedSubscriptionServed(ctx), "telemetry must not record a subscription credential source")
+
+	require.Eventually(t, func() bool { return len(repo.snapshot()) > 0 }, time.Second, 10*time.Millisecond)
+	debit := repo.snapshot()[0]
+	assert.Positive(t, debit.NotionalCostMicros)
+	assert.Equal(t, -debit.NotionalCostMicros, debit.DeltaUsdMicros,
+		"the turn must debit organization credits at cost, not settle as subscription-served")
+}

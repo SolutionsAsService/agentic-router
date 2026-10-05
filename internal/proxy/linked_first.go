@@ -47,7 +47,17 @@ func (s *Service) releaseLinkedFirstWhenPlanSpent(ctx context.Context, headers h
 		return ctx
 	}
 	observability.FromContext(ctx).Info("Linked subscription plan window is spent; continuing on organization credits", "route_path", routePath)
-	return billing.ReleaseLinkedFirst(ctx)
+	ctx = billing.ReleaseLinkedFirst(ctx)
+	// A spent plan can still answer by drawing the owner's purchased credits or
+	// overage, so neither the inbound token nor a managed seat for the covering
+	// family may serve this turn, including on a later failover attempt.
+	switch routePath {
+	case routePathMessages:
+		return withSuppressedClaudeSubscription(ctx)
+	case routePathChatCompletions, routePathResponses:
+		return withSuppressedCodexSubscription(ctx)
+	}
+	return ctx
 }
 
 // releaseUnservableLinkedFirst drops a linked-first mark after routing when the
