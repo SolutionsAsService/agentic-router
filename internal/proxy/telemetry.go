@@ -139,6 +139,7 @@ type InsertTelemetryParams struct {
 	TTFTMs                *int64
 	CacheCreationTokens   *int32
 	CacheReadTokens       *int32
+	ReasoningTokens       *int32
 	DeviceID              string
 	SessionID             string
 	RouterUserID          string

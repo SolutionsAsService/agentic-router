@@ -23,6 +23,8 @@ func (s *recordingUsageSink) RecordUsage(inputTokens, outputTokens int) {
 
 func (s *recordingUsageSink) RecordCacheUsage(int, int) {}
 
+func (s *recordingUsageSink) RecordReasoningUsage(int) {}
+
 func (s *recordingUsageSink) RecordOutputLimitReached() { s.limit = true }
 
 func TestResponsesWriter_NativeComputerCallIsUsable(t *testing.T) {

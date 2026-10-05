@@ -122,6 +122,19 @@ func TestUsageExtractor_OpenAIResponsesCacheWriteTokens(t *testing.T) {
 	assert.Equal(t, 800, cacheRead)
 }
 
+func TestUsageExtractor_ReasoningTokens(t *testing.T) {
+	for name, tc := range map[string]struct{ provider, body string }{
+		"responses": {"openai", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":120,\"output_tokens\":34,\"output_tokens_details\":{\"reasoning_tokens\":21}}}}\n\n"},
+		"chat":      {"openai", "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":34,\"completion_tokens_details\":{\"reasoning_tokens\":21}}}\n\n"},
+		"gemini":    {"google", "data: {\"usageMetadata\":{\"promptTokenCount\":120,\"candidatesTokenCount\":13,\"thoughtsTokenCount\":21}}\n\n"},
+	} {
+		ext := otel.NewUsageExtractor(httptest.NewRecorder(), tc.provider)
+		_, err := ext.Write([]byte(tc.body))
+		require.NoError(t, err)
+		assert.Equal(t, 21, ext.ReasoningTokens(), name)
+	}
+}
+
 func TestUsageExtractor_OpenAIResponsesNonStreaming(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ext := otel.NewUsageExtractor(rec, "openai")

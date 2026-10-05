@@ -15,6 +15,7 @@ import (
 type UsageSink interface {
 	RecordUsage(inputTokens, outputTokens int)
 	RecordCacheUsage(cacheCreationTokens, cacheReadTokens int)
+	RecordReasoningUsage(reasoningTokens int)
 	RecordOutputLimitReached()
 }
 
@@ -55,6 +56,7 @@ type UsageExtractor struct {
 	output             int
 	cacheCreation      int
 	cacheRead          int
+	reasoning          int
 	outputLimitReached bool
 
 	stopReason    string
@@ -152,6 +154,12 @@ func (u *UsageExtractor) RecordCacheUsage(cacheCreationTokens, cacheReadTokens i
 	}
 }
 
+func (u *UsageExtractor) RecordReasoningUsage(reasoningTokens int) {
+	if reasoningTokens > 0 {
+		u.reasoning = reasoningTokens
+	}
+}
+
 // RecordOutputLimitReached latches explicit upstream truncation for this attempt.
 // Translation repairs and trailing usage frames cannot clear the upstream fact.
 func (u *UsageExtractor) RecordOutputLimitReached() {
@@ -180,6 +188,15 @@ func (u *UsageExtractor) CacheTokens() (creation, read int) {
 		return 0, 0
 	}
 	return u.cacheCreation, u.cacheRead
+}
+
+// ReasoningTokens returns the reasoning share of output tokens. Zero means the
+// provider does not break it out (Anthropic) or the turn did not reason.
+func (u *UsageExtractor) ReasoningTokens() int {
+	if u == nil {
+		return 0
+	}
+	return u.reasoning
 }
 
 // AnthropicResponse returns the turn-ending signals sniffed from an
@@ -264,7 +281,7 @@ func (u *UsageExtractor) extractAnthropicSSE(eventType []byte, data []byte) {
 		}
 	}
 
-	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(data, providers.ProviderAnthropic)
+	input, output, cacheCreation, cacheRead, _, found := extractUsageGJSON(data, providers.ProviderAnthropic)
 	if !found {
 		return
 	}
@@ -297,7 +314,7 @@ func (u *UsageExtractor) extractOpenAISSE(data []byte) {
 		u.RecordOutputLimitReached()
 	}
 
-	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(trimmed, u.provider)
+	input, output, cacheCreation, cacheRead, reasoning, found := extractUsageGJSON(trimmed, u.provider)
 	if !found {
 		return
 	}
@@ -314,6 +331,9 @@ func (u *UsageExtractor) extractOpenAISSE(data []byte) {
 	if cacheRead > 0 {
 		u.cacheRead = cacheRead
 	}
+	if reasoning > 0 {
+		u.reasoning = reasoning
+	}
 }
 
 func (u *UsageExtractor) tryExtractFromJSON() {
@@ -321,7 +341,7 @@ func (u *UsageExtractor) tryExtractFromJSON() {
 		return
 	}
 
-	input, output, cacheCreation, cacheRead, found := extractUsageGJSON(u.leftover, u.provider)
+	input, output, cacheCreation, cacheRead, reasoning, found := extractUsageGJSON(u.leftover, u.provider)
 	if !found {
 		return
 	}
@@ -351,6 +371,9 @@ func (u *UsageExtractor) tryExtractFromJSON() {
 	}
 	if cacheRead > 0 {
 		u.cacheRead = cacheRead
+	}
+	if reasoning > 0 {
+		u.reasoning = reasoning
 	}
 }
 
@@ -424,7 +447,7 @@ func (u *UsageExtractor) observeOpenAIToolCall(index int) {
 // OpenAI cache-read maps from cached_tokens; GPT-5.6+ cache-write maps from cache_write_tokens.
 // Google's native :generateContent uses usageMetadata; its OpenAI-compat surface
 // uses the OpenAI shape instead.
-func extractUsageGJSON(data []byte, provider string) (input, output, cacheCreation, cacheRead int, found bool) {
+func extractUsageGJSON(data []byte, provider string) (input, output, cacheCreation, cacheRead, reasoning int, found bool) {
 	family := providers.FamilyFor(provider)
 
 	if family == providers.FamilyGemini {
@@ -433,7 +456,7 @@ func extractUsageGJSON(data []byte, provider string) (input, output, cacheCreati
 			// candidatesTokenCount excludes thinking; thoughtsTokenCount is billed as output.
 			output = int(meta.Get("candidatesTokenCount").Int() + meta.Get("thoughtsTokenCount").Int())
 			cacheRead = int(meta.Get("cachedContentTokenCount").Int())
-			return input, output, 0, cacheRead, true
+			return input, output, 0, cacheRead, int(meta.Get("thoughtsTokenCount").Int()), true
 		}
 	}
 
@@ -447,7 +470,7 @@ func extractUsageGJSON(data []byte, provider string) (input, output, cacheCreati
 		usage = gjson.GetBytes(data, "response.usage")
 	}
 	if !usage.Exists() {
-		return 0, 0, 0, 0, false
+		return 0, 0, 0, 0, 0, false
 	}
 
 	switch family {
@@ -467,11 +490,21 @@ func extractUsageGJSON(data []byte, provider string) (input, output, cacheCreati
 			output = int(usage.Get("output_tokens").Int())
 		}
 		cacheCreation, cacheRead = openaiCacheTokens(usage)
+		reasoning = openaiReasoningTokens(usage)
 	default:
-		return 0, 0, 0, 0, false
+		return 0, 0, 0, 0, 0, false
 	}
 
-	return input, output, cacheCreation, cacheRead, true
+	return input, output, cacheCreation, cacheRead, reasoning, true
+}
+
+// openaiReasoningTokens mirrors translate.OpenAIReasoningTokens; duplicated for
+// the same import-cycle reason as openaiCacheTokens.
+func openaiReasoningTokens(usage gjson.Result) int {
+	if r := usage.Get("output_tokens_details.reasoning_tokens"); r.Exists() {
+		return int(r.Int())
+	}
+	return int(usage.Get("completion_tokens_details.reasoning_tokens").Int())
 }
 
 // openaiCacheTokens mirrors translate.OpenAICacheTokens. Duplicated here so

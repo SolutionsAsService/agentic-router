@@ -154,6 +154,7 @@ func (r *TelemetryRepo) InsertRequestTelemetry(ctx context.Context, p proxy.Inse
 		TtftMs:                                   p.TTFTMs,
 		CacheCreationTokens:                      p.CacheCreationTokens,
 		CacheReadTokens:                          p.CacheReadTokens,
+		ReasoningTokens:                          p.ReasoningTokens,
 		DeviceID:                                 stringPtrOrNil(p.DeviceID),
 		SessionID:                                stringPtrOrNil(p.SessionID),
 		RouterUserID:                             uuidOrNil(p.RouterUserID),

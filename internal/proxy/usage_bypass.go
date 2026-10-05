@@ -564,6 +564,7 @@ func (s *Service) bypassToAnthropic(
 			TurnType:               string(turnType),
 			CacheCreationTokens:    cacheTokenPtr(cacheCreation),
 			CacheReadTokens:        cacheTokenPtr(cacheRead),
+			ReasoningTokens:        cacheTokenPtr(extractor.ReasoningTokens()),
 			DeviceID:               clientID.DeviceID,
 			SessionID:              clientID.SessionID,
 			RouterUserID:           auth.UserIDFrom(ctx),

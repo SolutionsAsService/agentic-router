@@ -891,6 +891,7 @@ func (t *AnthropicSSETranslator) Finalize() error {
 			)
 			cw, cr := OpenAICacheTokens(usage)
 			t.usageSink.RecordCacheUsage(cw, cr)
+			t.usageSink.RecordReasoningUsage(OpenAIReasoningTokens(usage))
 		}
 	}
 	// Raw upstream cap, observed before openAIToAnthropicResponse promotes a
@@ -1031,6 +1032,7 @@ func (t *AnthropicSSETranslator) extractAndForwardUsage(data []byte) {
 	if t.usageSink != nil {
 		t.usageSink.RecordUsage(int(prompt), int(completion))
 		t.usageSink.RecordCacheUsage(cacheCreation, cachedRead)
+		t.usageSink.RecordReasoningUsage(OpenAIReasoningTokens(usage))
 	}
 }
 

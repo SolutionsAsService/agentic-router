@@ -474,11 +474,12 @@ func (t *ResponsesToOpenAIChatWriter) recordUsage(usage gjson.Result) {
 	if t.usageTotal == 0 {
 		t.usageTotal = t.usageInput + t.usageOutput
 	}
-	t.usageReasoning = int(usage.Get("output_tokens_details.reasoning_tokens").Int())
+	t.usageReasoning = OpenAIReasoningTokens(usage)
 	t.usageCacheCreation, t.usageCacheRead = OpenAICacheTokens(usage)
 	if t.usageSink != nil {
 		t.usageSink.RecordUsage(t.usageInput, t.usageOutput)
 		t.usageSink.RecordCacheUsage(t.usageCacheCreation, t.usageCacheRead)
+		t.usageSink.RecordReasoningUsage(t.usageReasoning)
 	}
 }
 

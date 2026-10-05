@@ -151,6 +151,7 @@ func (t *GeminiToOpenAISSETranslator) Finalize() error {
 				int(usage.Get("promptTokenCount").Int()),
 				int(geminiOutputTokens(usage)),
 			)
+			t.usageSink.RecordReasoningUsage(int(usage.Get("thoughtsTokenCount").Int()))
 			if cached := int(usage.Get("cachedContentTokenCount").Int()); cached > 0 {
 				t.usageSink.RecordCacheUsage(0, cached)
 			}
@@ -281,6 +282,7 @@ func geminiUsageFromBytes(data []byte) map[string]int {
 		"completion_tokens": completion,
 		"total_tokens":      total,
 		"cached_tokens":     cached,
+		"reasoning_tokens":  int(r.Get("thoughtsTokenCount").Int()),
 	}
 }
 
@@ -375,6 +377,11 @@ func (t *GeminiToOpenAISSETranslator) writeUsageJSON(usage map[string]int) {
 		sse.WriteJSONInt(t.bw, int64(cached))
 		t.bw.WriteByte('}')
 	}
+	if reasoning := usage["reasoning_tokens"]; reasoning > 0 {
+		t.bw.WriteString(`,"completion_tokens_details":{"reasoning_tokens":`)
+		sse.WriteJSONInt(t.bw, int64(reasoning))
+		t.bw.WriteByte('}')
+	}
 	t.bw.WriteByte('}')
 }
 
@@ -383,6 +390,7 @@ func (t *GeminiToOpenAISSETranslator) recordUsageOnSink(usage map[string]int) {
 		return
 	}
 	t.usageSink.RecordUsage(usage["prompt_tokens"], usage["completion_tokens"])
+	t.usageSink.RecordReasoningUsage(usage["reasoning_tokens"])
 	if cached := usage["cached_tokens"]; cached > 0 {
 		t.usageSink.RecordCacheUsage(0, cached)
 	}

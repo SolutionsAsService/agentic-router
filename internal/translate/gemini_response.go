@@ -161,6 +161,13 @@ func writeOpenAIUsageFromGemini(jw *jsonWriter, meta gjson.Result) {
 	jw.Int(completion)
 	jw.Key("total_tokens")
 	jw.Int(total)
+	if reasoning := meta.Get("thoughtsTokenCount").Int(); reasoning > 0 {
+		jw.Key("completion_tokens_details")
+		jw.Obj()
+		jw.Key("reasoning_tokens")
+		jw.Int(reasoning)
+		jw.EndObj()
+	}
 	jw.EndObj()
 }
 

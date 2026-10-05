@@ -8,6 +8,9 @@ package translate
 type UsageSink interface {
 	RecordUsage(inputTokens, outputTokens int)
 	RecordCacheUsage(cacheCreationTokens, cacheReadTokens int)
+	// RecordReasoningUsage reports the share of output tokens spent on
+	// reasoning. Pass 0 when the provider does not break it out.
+	RecordReasoningUsage(reasoningTokens int)
 	// RecordOutputLimitReached reports an explicit upstream cap before tool
 	// repair or stop-reason promotion. Token count alone is not evidence.
 	RecordOutputLimitReached()

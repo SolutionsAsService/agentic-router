@@ -658,6 +658,7 @@ func (t *ResponsesToAnthropicWriter) captureFinalResponse(data []byte) {
 		if t.usageSink != nil {
 			t.usageSink.RecordUsage(t.usageInput, t.usageOutput)
 			t.usageSink.RecordCacheUsage(t.usageCacheCreation, t.usageCacheRead)
+			t.usageSink.RecordReasoningUsage(OpenAIReasoningTokens(usage))
 		}
 	}
 }
@@ -799,6 +800,7 @@ func (t *ResponsesToAnthropicWriter) recordOpenAIUsage(usage gjson.Result) {
 	if t.usageSink != nil {
 		t.usageSink.RecordUsage(t.usageInput, t.usageOutput)
 		t.usageSink.RecordCacheUsage(t.usageCacheCreation, t.usageCacheRead)
+		t.usageSink.RecordReasoningUsage(OpenAIReasoningTokens(usage))
 	}
 }
 

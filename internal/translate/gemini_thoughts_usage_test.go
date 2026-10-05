@@ -63,3 +63,32 @@ func TestGeminiSSETranslator_NonStreamingSinkOutputIncludesThoughts(t *testing.T
 	assert.Equal(t, 100, sink.input)
 	assert.Equal(t, 257, sink.output)
 }
+
+func TestGeminiToAnthropicChain_ReasoningTokensReachOuterSink(t *testing.T) {
+	for name, tc := range map[string]struct {
+		contentType string
+		chunks      []string
+	}{
+		"stream": {"text/event-stream", []string{
+			`data: {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}` + "\n\n",
+			`data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}],` + geminiThoughtsUsage + `}` + "\n\n",
+		}},
+		"json": {"application/json", []string{
+			`{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],` + geminiThoughtsUsage + `}`,
+		}},
+	} {
+		sink := &fakeUsageSink{}
+		anthropicTranslator := translate.NewAnthropicSSETranslator(httptest.NewRecorder(), "gemini-3.8-flash", sink)
+		geminiTranslator := translate.NewGeminiToOpenAISSETranslator(anthropicTranslator, "gemini-3.8-flash", nil)
+		geminiTranslator.Header().Set("Content-Type", tc.contentType)
+		geminiTranslator.WriteHeader(http.StatusOK)
+		for _, c := range tc.chunks {
+			_, err := geminiTranslator.Write([]byte(c))
+			require.NoError(t, err, name)
+		}
+		require.NoError(t, geminiTranslator.Finalize(), name)
+		require.NoError(t, anthropicTranslator.Finalize(), name)
+		assert.Equal(t, 257, sink.output, name)
+		assert.Equal(t, 250, sink.reasoning, name)
+	}
+}
