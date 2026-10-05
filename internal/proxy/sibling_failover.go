@@ -124,9 +124,15 @@ func (s *Service) rescueDecisions(ctx context.Context, failed router.Decision, c
 // loop only reaches them once every eligible candidate has failed pre-commit.
 // The scorer drops automatically excluded models from CandidateModels, so a
 // cooling arm is looked up by name (catalog binding or gateway alias) when the
-// scored list lacks it. Hard exclusions (excludedModels) and session-lifetime
-// demotions still hold, and the walk never returns failed.Model, so the
-// exhausted case prefers a cooled arm to the arm that just 429'd.
+// scored list lacks it. Hard exclusions (excludedModels) still hold, and the
+// walk never returns failed.Model, so the exhausted case prefers a cooled arm
+// to the arm that just failed.
+//
+// Only when neither walk finds anything does a sibling failover readmit
+// session-lifetime demotions: a session whose every arm has been struck out
+// still gets one rescue attempt on an arm that failed on an earlier turn
+// instead of surfacing this turn's failure. Other rescues (the cyber-refusal
+// retry) walk their own ordered fallbacks and never readmit a strike.
 func (s *Service) rescueWalkOrReadmitCooling(
 	ctx context.Context,
 	failed router.Decision,
@@ -137,60 +143,115 @@ func (s *Service) rescueWalkOrReadmitCooling(
 	providerFor func(id string) (string, bool),
 ) []router.Decision {
 	decisions := walkRescueCandidates(failed, candidates, reason, excludedModels, automaticExcluded, est, sigSavings, outputReserve, providerFor)
-	cooling := sessionCooldownModelsFromContext(ctx)
-	if len(cooling) == 0 {
+	decisions = append(decisions, s.readmitCoolingRescueCandidates(ctx, failed, candidates, reason, excludedModels, est, sigSavings, outputReserve, providerFor)...)
+	struck := strikesInRescuePool(failed, candidates, sessionStrikeReadmitModelsFromContext(ctx))
+	if len(decisions) > 0 || len(struck) == 0 || reason != ReasonSiblingFailover {
 		return decisions
 	}
-	pool := make([]string, 0, len(candidates)+len(cooling))
+	return s.readmissionWalk(ctx, failed, candidates, struck, reason, excludedModels, est, sigSavings, outputReserve, providerFor)
+}
+
+func (s *Service) readmitCoolingRescueCandidates(
+	ctx context.Context,
+	failed router.Decision,
+	candidates []string,
+	reason string,
+	excludedModels map[string]struct{},
+	est, sigSavings, outputReserve int,
+	providerFor func(id string) (string, bool),
+) []router.Decision {
+	cooling := sessionCooldownModelsFromContext(ctx)
+	if len(cooling) == 0 {
+		return nil
+	}
+	readmitted := s.readmissionWalk(ctx, failed, candidates, cooldownsByExpiry(cooling), reason, excludedModels, est, sigSavings, outputReserve, providerFor)
+	sort.SliceStable(readmitted, func(i, j int) bool {
+		return cooling[readmitted[i].Model].Before(cooling[readmitted[j].Model])
+	})
+	return readmitted
+}
+
+// readmissionWalk walks candidates plus the readmitted models, lifting only
+// their soft exclusion: every other candidate was already covered by an
+// earlier walk, and the deployment-wide automatic exclusion still holds.
+func (s *Service) readmissionWalk(
+	ctx context.Context,
+	failed router.Decision,
+	candidates, readmit []string,
+	reason string,
+	excludedModels map[string]struct{},
+	est, sigSavings, outputReserve int,
+	providerFor func(id string) (string, bool),
+) []router.Decision {
+	pool := make([]string, 0, len(candidates)+len(readmit))
 	pool = append(pool, candidates...)
-	for _, model := range cooldownsByExpiry(cooling) {
-		if failed.Metadata != nil && failed.Metadata.RosterFailover {
-			md := failed.Metadata
-			if md.ClusterRouterVersion != "" {
-				if !slices.Contains(md.ScorerRescuePool, model) ||
-					catalog.TierFor(model) < catalog.TierFor(failed.Model) ||
-					catalog.TierFor(model) > catalog.TierHigh {
-					continue
-				}
-			} else if !slices.Contains(md.RescueModels, model) && !slices.Contains(md.SidecarRescuePool, model) {
-				continue
-			}
-		}
-		if !slices.Contains(pool, model) {
+	for _, model := range readmit {
+		if rosterRescueAdmits(failed, model) && !slices.Contains(pool, model) {
 			pool = append(pool, model)
 		}
 	}
-	// Second walk lifts only the cooldowns: the deployment-wide exclusion
-	// holds even for a cooling arm, and the first walk covered the
-	// non-cooling candidates.
 	readmitExcluded := make(map[string]struct{}, len(pool))
 	for _, id := range pool {
-		if _, cooldown := cooling[id]; !cooldown {
+		if !slices.Contains(readmit, id) {
 			readmitExcluded[id] = struct{}{}
 		}
 	}
 	readmitExcluded = mergeExcludedModels(readmitExcluded, s.globalAutomaticExcludedModels(ctx))
-	readmitted := walkRescueCandidates(failed, pool, reason, excludedModels, readmitExcluded, est, sigSavings, outputReserve, providerFor)
-	sort.SliceStable(readmitted, func(i, j int) bool {
-		return cooling[readmitted[i].Model].Before(cooling[readmitted[j].Model])
-	})
-	return append(decisions, readmitted...)
+	return walkRescueCandidates(failed, pool, reason, excludedModels, readmitExcluded, est, sigSavings, outputReserve, providerFor)
+}
+
+// rosterRescueAdmits bounds readmission on a roster-failover turn to the
+// pool the policy would have rescued onto before soft exclusions.
+func rosterRescueAdmits(failed router.Decision, model string) bool {
+	md := failed.Metadata
+	if md == nil || !md.RosterFailover {
+		return true
+	}
+	if md.ClusterRouterVersion != "" {
+		return slices.Contains(md.ScorerRescuePool, model) &&
+			catalog.TierFor(model) >= catalog.TierFor(failed.Model) &&
+			catalog.TierFor(model) <= catalog.TierHigh
+	}
+	return slices.Contains(md.RescueModels, model) || slices.Contains(md.SidecarRescuePool, model)
+}
+
+// strikesInRescuePool keeps the struck models this turn could have rescued
+// onto before soft exclusions, so a last-resort readmission never leaves the
+// turn's scored pool. Roster failover is bounded later by rosterRescueAdmits.
+func strikesInRescuePool(failed router.Decision, candidates, struck []string) []string {
+	md := failed.Metadata
+	if md == nil || md.RosterFailover {
+		return struck
+	}
+	var out []string
+	for _, model := range struck {
+		if slices.Contains(candidates, model) || slices.Contains(md.ScorerRescuePool, model) || slices.Contains(md.SidecarRescuePool, model) {
+			out = append(out, model)
+		}
+	}
+	return out
 }
 
 // noteRescueReadmission records, as the rescue loop dispatches a candidate,
-// that the candidate is a cooling-down arm readmitted because every eligible
-// candidate ahead of it failed: the session's rescue pool was exhausted.
+// that the candidate is a soft-excluded arm readmitted because no eligible
+// candidate was left: the session's rescue pool was exhausted.
 func (s *Service) noteRescueReadmission(ctx context.Context, failed, rescuer router.Decision) {
-	cooling := sessionCooldownModelsFromContext(ctx)
-	until, readmitted := cooling[rescuer.Model]
-	if !readmitted {
+	if until, cooling := sessionCooldownModelsFromContext(ctx)[rescuer.Model]; cooling {
+		rateLimitTurnFromContext(ctx).recordRescuePoolExhausted(rescuer.Model)
+		observability.FromContext(ctx).Info("rescue pool exhausted, readmitting cooling-down model",
+			"failed_model", failed.Model,
+			"rescue_pool_readmitted", rescuer.Model,
+			"demotion_expires_at", until.UTC().Format(time.RFC3339),
+		)
+		return
+	}
+	if !slices.Contains(sessionStrikeReadmitModelsFromContext(ctx), rescuer.Model) {
 		return
 	}
 	rateLimitTurnFromContext(ctx).recordRescuePoolExhausted(rescuer.Model)
-	observability.FromContext(ctx).Info("rescue pool exhausted, readmitting cooling-down model",
+	observability.FromContext(ctx).Warn("rescue pool exhausted, readmitting session-demoted model",
 		"failed_model", failed.Model,
 		"rescue_pool_readmitted", rescuer.Model,
-		"demotion_expires_at", until.UTC().Format(time.RFC3339),
 	)
 }
 

@@ -560,6 +560,11 @@ type SessionDemotedModelsContextKey struct{}
 // honouring them would leave no candidate.
 type SessionCooldownModelsContextKey struct{}
 
+// SessionStrikeReadmitModelsContextKey carries the session-lifetime demotions
+// ([]string) the in-turn rescue may readmit when every other candidate,
+// cooling arms included, is gone. Image-unsafe arms are already dropped.
+type SessionStrikeReadmitModelsContextKey struct{}
+
 // InstallationPreferredModelsContextKey is the context key for the authed
 // installation's model priority ranking. Carried as []string in descending
 // preference (index 0 = first preference). See preferredModelsForRequest.
@@ -1179,6 +1184,11 @@ func sessionDemotedModelsFromContext(ctx context.Context) []string {
 		return nil
 	}
 	out, _ := v.([]string)
+	return out
+}
+
+func sessionStrikeReadmitModelsFromContext(ctx context.Context) []string {
+	out, _ := ctx.Value(SessionStrikeReadmitModelsContextKey{}).([]string)
 	return out
 }
 
@@ -3809,6 +3819,9 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 		ctx = context.WithValue(ctx, SessionDemotedModelsContextKey{}, routeRes.SessionDemotedModels)
 		if len(routeRes.SessionCooldownModels) > 0 {
 			ctx = context.WithValue(ctx, SessionCooldownModelsContextKey{}, routeRes.SessionCooldownModels)
+		}
+		if len(routeRes.SessionStrikeReadmitModels) > 0 {
+			ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, routeRes.SessionStrikeReadmitModels)
 		}
 	}
 
@@ -6839,6 +6852,9 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 		ctx = context.WithValue(ctx, SessionDemotedModelsContextKey{}, routeRes.SessionDemotedModels)
 		if len(routeRes.SessionCooldownModels) > 0 {
 			ctx = context.WithValue(ctx, SessionCooldownModelsContextKey{}, routeRes.SessionCooldownModels)
+		}
+		if len(routeRes.SessionStrikeReadmitModels) > 0 {
+			ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, routeRes.SessionStrikeReadmitModels)
 		}
 	}
 	routeRes.SuggestionMode = r.Header.Get("x-weave-suggestion-mode") == "true"

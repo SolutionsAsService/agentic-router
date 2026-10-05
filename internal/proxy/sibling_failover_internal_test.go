@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"testing"
+	"time"
 
 	"weave-os/router/internal/auth"
 	"weave-os/router/internal/providers"
@@ -400,4 +401,152 @@ func TestSiblingFailover_RosterOrderBeatsProviderPreferenceAndExcludesUnlistedMo
 
 	got := s.siblingFailoverDecisions(context.Background(), failed, 1_000, 0, 0)
 	assert.Equal(t, []string{"claude-sonnet-5", "deepseek/deepseek-v4-pro"}, siblingModels(got))
+}
+
+// A gateway session that has struck out both of its arms (prod 2026-10:
+// Cortex header timeouts demoted gpt-6-luna and claude-opus-5-5 in turn)
+// still rescues onto the other arm instead of surfacing the 502: with no
+// eligible or cooling candidate left, the session-lifetime demotion is
+// lifted for the walk, and the arm that just failed is never re-served.
+func TestGatewayRescueDecisions_AllArmsStruckOutReadmitsDemotedSibling(t *testing.T) {
+	s := &Service{}
+	ctx := context.WithValue(context.Background(), ExternalAPIKeysContextKey{}, []*auth.ExternalAPIKey{
+		{Provider: providers.ProviderOpenAIGateway, Plaintext: []byte("pat"), ModelAliases: map[string]string{catalog.ModelGPT6Luna: catalog.ModelGPT6Luna}},
+		{Provider: providers.ProviderAnthropicGateway, Plaintext: []byte("pat"), ModelAliases: map[string]string{"claude-opus-5-5": "claude-opus-5-5"}},
+	})
+	struck := []string{catalog.ModelGPT6Luna, "claude-opus-5-5"}
+	ctx = context.WithValue(ctx, SessionDemotedModelsContextKey{}, struck)
+	ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, struck)
+	failed := router.Decision{
+		Provider: providers.ProviderOpenAIGateway,
+		Model:    catalog.ModelGPT6Luna,
+		Metadata: &router.RoutingMetadata{
+			RosterFailover:    true,
+			RescueModels:      []string{catalog.ModelGPT6Luna},
+			SidecarRescuePool: []string{"claude-opus-5-5"},
+		},
+	}
+
+	got := s.siblingFailoverDecisions(ctx, failed, 1_000, 0, 0)
+
+	assert.Equal(t, []string{"claude-opus-5-5"}, siblingModels(got))
+	assert.Equal(t, providers.ProviderAnthropicGateway, got[0].Provider)
+}
+
+// Without the readmission list the struck-out pool stays empty, as before.
+func TestRescueDecisions_StruckOutPoolWithoutReadmitListStaysEmpty(t *testing.T) {
+	s := siblingService(providers.ProviderAnthropic)
+	md := &router.RoutingMetadata{
+		CandidateModels:    []string{"claude-opus-5", "claude-sonnet-5"},
+		CandidateProviders: map[string]string{"claude-sonnet-5": providers.ProviderAnthropic},
+	}
+	ctx := context.WithValue(context.Background(), SessionDemotedModelsContextKey{}, []string{"claude-sonnet-5"})
+
+	assert.Empty(t, s.siblingFailoverDecisions(ctx, overloadedDecision(md), 1_000, 0, 0))
+}
+
+// Struck-out arms are a last resort behind everything else: an eligible
+// candidate keeps them out of the walk entirely, and so does a cooling arm.
+func TestRescueDecisions_StruckOutArmsOnlyWhenNothingElseIsLeft(t *testing.T) {
+	s := siblingService(providers.ProviderAnthropic)
+	md := &router.RoutingMetadata{
+		CandidateModels: []string{"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		CandidateProviders: map[string]string{
+			"claude-sonnet-5":  providers.ProviderAnthropic,
+			"claude-haiku-4-5": providers.ProviderAnthropic,
+		},
+	}
+	ctx := context.WithValue(context.Background(), SessionDemotedModelsContextKey{}, []string{"claude-sonnet-5"})
+	ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, []string{"claude-sonnet-5"})
+
+	assert.Equal(t, []string{"claude-haiku-4-5"}, siblingModels(s.siblingFailoverDecisions(ctx, overloadedDecision(md), 1_000, 0, 0)))
+
+	ctx = context.WithValue(context.Background(), SessionDemotedModelsContextKey{}, []string{"claude-sonnet-5", "claude-haiku-4-5"})
+	ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, []string{"claude-sonnet-5"})
+	ctx = context.WithValue(ctx, SessionCooldownModelsContextKey{}, map[string]time.Time{"claude-haiku-4-5": time.Now().Add(time.Minute)})
+
+	assert.Equal(t, []string{"claude-haiku-4-5"}, siblingModels(s.siblingFailoverDecisions(ctx, overloadedDecision(md), 1_000, 0, 0)))
+}
+
+// Lifting a session strike never lifts the deployment-wide exclusion or a
+// hard (org) exclusion on the same model.
+func TestRescueDecisions_StruckOutReadmissionKeepsGlobalExclusion(t *testing.T) {
+	s := siblingService(providers.ProviderAnthropic).
+		WithGlobalAutomaticExclusions(&stubGlobalExclusionStore{byModel: map[string]string{"claude-sonnet-5": "disabled"}})
+	md := &router.RoutingMetadata{
+		CandidateModels: []string{"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		CandidateProviders: map[string]string{
+			"claude-sonnet-5":  providers.ProviderAnthropic,
+			"claude-haiku-4-5": providers.ProviderAnthropic,
+		},
+	}
+	struck := []string{"claude-sonnet-5", "claude-haiku-4-5"}
+	ctx := context.WithValue(context.Background(), SessionDemotedModelsContextKey{}, struck)
+	ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, struck)
+
+	assert.Equal(t, []string{"claude-haiku-4-5"}, siblingModels(s.siblingFailoverDecisions(ctx, overloadedDecision(md), 1_000, 0, 0)))
+}
+
+// Dispatching a readmitted struck-out arm is recorded as rescue-pool
+// exhaustion on the completion line.
+func TestNoteRescueReadmission_RecordsStruckOutArm(t *testing.T) {
+	s := siblingService(providers.ProviderAnthropic)
+	ctx := context.WithValue(context.Background(), SessionStrikeReadmitModelsContextKey{}, []string{"claude-sonnet-5"})
+	ctx, turn := withRateLimitTurn(ctx)
+	failed := overloadedDecision(&router.RoutingMetadata{})
+
+	s.noteRescueReadmission(ctx, failed, router.Decision{Model: "claude-haiku-4-5"})
+	assert.NotContains(t, turn.completionLogFields(), true)
+
+	s.noteRescueReadmission(ctx, failed, router.Decision{Model: "claude-sonnet-5"})
+	fields := turn.completionLogFields()
+	assert.Contains(t, fields, "rescue_pool_exhausted")
+	assert.Contains(t, fields, true)
+	assert.Contains(t, fields, []string{"claude-sonnet-5"})
+}
+
+func TestImageSafeModels_DropsTextOnlyArmsOnImageTurns(t *testing.T) {
+	models := []string{"claude-opus-5", "z-ai/glm-5.1"}
+	assert.Equal(t, models, imageSafeModels(models, false))
+	assert.Equal(t, []string{"claude-opus-5"}, imageSafeModels(models, true))
+}
+
+// Strike readmission belongs to sibling failover only: the cyber-refusal
+// retry walks its own runner-up then configured fallback, and a struck arm
+// must not jump ahead of that fallback.
+func TestRescueDecision_CyberRefusalRetryNeverReadmitsStruckArm(t *testing.T) {
+	s := siblingService(providers.ProviderAnthropic)
+	failed := overloadedDecision(&router.RoutingMetadata{})
+	ctx := context.WithValue(context.Background(), SessionDemotedModelsContextKey{}, []string{"claude-sonnet-5"})
+	ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, []string{"claude-sonnet-5"})
+
+	_, found := s.rescueDecision(ctx, failed, []string{"claude-sonnet-5"}, ReasonCyberRefusalRetry, 1_000, 0, 0)
+	assert.False(t, found)
+
+	got := s.rescueDecisions(ctx, failed, []string{"claude-sonnet-5"}, ReasonSiblingFailover, 1_000, 0, 0)
+	assert.Equal(t, []string{"claude-sonnet-5"}, siblingModels(got))
+}
+
+// A struck model outside this turn's scored pool is never readmitted: the last
+// resort stays within the quality band the turn was scored for.
+func TestRescueDecisions_StruckOutReadmissionStaysInScoredPool(t *testing.T) {
+	s := siblingService(providers.ProviderAnthropic)
+	md := &router.RoutingMetadata{
+		CandidateModels:    []string{"claude-opus-5"},
+		CandidateProviders: map[string]string{"claude-haiku-4-5": providers.ProviderAnthropic},
+	}
+	struck := []string{"claude-haiku-4-5"}
+	ctx := context.WithValue(context.Background(), SessionDemotedModelsContextKey{}, struck)
+	ctx = context.WithValue(ctx, SessionStrikeReadmitModelsContextKey{}, struck)
+
+	assert.Empty(t, s.siblingFailoverDecisions(ctx, overloadedDecision(md), 1_000, 0, 0))
+
+	md.ScorerRescuePool = struck
+	assert.Equal(t, struck, siblingModels(s.siblingFailoverDecisions(ctx, overloadedDecision(md), 1_000, 0, 0)))
+}
+
+func TestHarnessSafeModels_DropsWeakAgenticArmsOnToolTurns(t *testing.T) {
+	models := []string{"claude-opus-5", "gemini-3.5-flash-lite"}
+	assert.Equal(t, models, harnessSafeModels(models, false))
+	assert.Equal(t, []string{"claude-opus-5"}, harnessSafeModels(models, true))
 }
