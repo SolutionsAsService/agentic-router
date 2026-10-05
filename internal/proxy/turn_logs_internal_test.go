@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -226,29 +228,45 @@ func TestRecordCallLog_OffEmitsNothing(t *testing.T) {
 	buf := otel.NewBuffer(em)
 	ctx := buf.WithContext(context.Background())
 	base := otel.NewAttrBuilder(1).String("decision.model", "claude-opus-4-8").Build()
-	s.recordCallLog(ctx, base, 42, false, []byte("req"), []byte("resp"), false)
+	s.recordCallLog(ctx, base, 42, nil, []byte("req"), []byte("resp"), false)
 	otel.Flush(ctx)
 
 	require.NoError(t, em.Shutdown(context.Background()))
 	assert.Equal(t, 0, coll.count(t))
 }
 
-func TestRecordCallLog_InstallationOffEmitsContentFreePermanentError(t *testing.T) {
+func TestRecordCallLog_InstallationOffEmitsPermanentErrorResponse(t *testing.T) {
 	coll := newLogCollector(t)
 	s, em := newServiceWithEmitter(t, CaptureFull, nil, coll.server.URL)
 	buf := otel.NewBuffer(em)
 	ctx := context.WithValue(buf.WithContext(context.Background()), InstallationCaptureModeContextKey{}, CaptureOff)
-	base := otel.NewAttrBuilder(9).
+	base := otel.NewAttrBuilder(15).
 		String("request_id", "req-1").
 		String("external_id", "org-1").
 		String("client.session_id", "sess-1").
 		String("router_user_id", "11111111-1111-1111-1111-111111111111").
+		String("requested.model", "claude-opus-5").
 		String("decision.model", "claude-opus-5-5").
 		String("decision.provider", "snowflake").
+		String("dispatch.primary_model", "claude-opus-5-5").
+		String("dispatch.primary_provider", "anthropic_gateway").
+		String("dispatch.final_provider", "anthropic_gateway").
+		Int64("request.message_count", 37).
+		Bool("request.has_tools", true).
+		Bool("routing.cross_format", false).
+		String("routing.turn_type", "tool").
 		Int64("upstream.status_code", 400).
 		String("routing.candidate_scores", "sensitive-score").
 		String("io.request_body", "secret-prompt").Build()
-	s.recordCallLog(ctx, base, 42, true, []byte("secret-request"), []byte("secret-response"), false)
+	upstreamErrorBody := []byte(`{"error":{"type":"invalid_request_error","message":"private-content-echo"}}`)
+	proxyErr := &providers.UpstreamErrorResponse{
+		Status: http.StatusBadRequest,
+		Headers: http.Header{
+			"X-Snowflake-Query-Id": {"query-123"},
+		},
+		Body: upstreamErrorBody,
+	}
+	s.recordCallLog(ctx, base, 42, proxyErr, []byte("secret-request"), []byte("secret-response"), false)
 	otel.Flush(ctx)
 	require.NoError(t, em.Shutdown(context.Background()))
 
@@ -261,14 +279,35 @@ func TestRecordCallLog_InstallationOffEmitsContentFreePermanentError(t *testing.
 	assert.Equal(t, "router.permanent_error", record.GetBody().GetStringValue())
 	assert.Equal(t, "ERROR", record.SeverityText)
 	assert.Equal(t, map[string]*commonv1.AnyValue{
-		"request_id":           {Value: &commonv1.AnyValue_StringValue{StringValue: "req-1"}},
-		"external_id":          {Value: &commonv1.AnyValue_StringValue{StringValue: "org-1"}},
-		"client.session_id":    {Value: &commonv1.AnyValue_StringValue{StringValue: "sess-1"}},
-		"router_user_id":       {Value: &commonv1.AnyValue_StringValue{StringValue: "11111111-1111-1111-1111-111111111111"}},
-		"decision.model":       {Value: &commonv1.AnyValue_StringValue{StringValue: "claude-opus-5-5"}},
-		"decision.provider":    {Value: &commonv1.AnyValue_StringValue{StringValue: "snowflake"}},
-		"upstream.status_code": {Value: &commonv1.AnyValue_IntValue{IntValue: 400}},
+		"request_id":                        {Value: &commonv1.AnyValue_StringValue{StringValue: "req-1"}},
+		"external_id":                       {Value: &commonv1.AnyValue_StringValue{StringValue: "org-1"}},
+		"client.session_id":                 {Value: &commonv1.AnyValue_StringValue{StringValue: "sess-1"}},
+		"router_user_id":                    {Value: &commonv1.AnyValue_StringValue{StringValue: "11111111-1111-1111-1111-111111111111"}},
+		"decision.model":                    {Value: &commonv1.AnyValue_StringValue{StringValue: "claude-opus-5-5"}},
+		"decision.provider":                 {Value: &commonv1.AnyValue_StringValue{StringValue: "snowflake"}},
+		"dispatch.primary_model":            {Value: &commonv1.AnyValue_StringValue{StringValue: "claude-opus-5-5"}},
+		"dispatch.primary_provider":         {Value: &commonv1.AnyValue_StringValue{StringValue: "anthropic_gateway"}},
+		"dispatch.final_provider":           {Value: &commonv1.AnyValue_StringValue{StringValue: "anthropic_gateway"}},
+		"request.message_count":             {Value: &commonv1.AnyValue_IntValue{IntValue: 37}},
+		"request.has_tools":                 {Value: &commonv1.AnyValue_BoolValue{BoolValue: true}},
+		"routing.cross_format":              {Value: &commonv1.AnyValue_BoolValue{BoolValue: false}},
+		"routing.turn_type":                 {Value: &commonv1.AnyValue_StringValue{StringValue: "tool"}},
+		"upstream.status_code":              {Value: &commonv1.AnyValue_IntValue{IntValue: 400}},
+		"upstream.error_class":              {Value: &commonv1.AnyValue_StringValue{StringValue: string(permanentErrorClassInvalidRequest)}},
+		"upstream.error_body_format":        {Value: &commonv1.AnyValue_StringValue{StringValue: string(errorBodyFormatJSON)}},
+		"upstream.error_body_bytes":         {Value: &commonv1.AnyValue_IntValue{IntValue: int64(len(upstreamErrorBody))}},
+		"upstream.error_body_capped":        {Value: &commonv1.AnyValue_BoolValue{BoolValue: false}},
+		"upstream.error_response":           {Value: &commonv1.AnyValue_StringValue{StringValue: string(upstreamErrorBody)}},
+		"upstream.error_response_truncated": {Value: &commonv1.AnyValue_BoolValue{BoolValue: false}},
+		"upstream.request_id":               {Value: &commonv1.AnyValue_StringValue{StringValue: "query-123"}},
+		"request.size_bucket":               {Value: &commonv1.AnyValue_StringValue{StringValue: string(requestSizeBucketUnder16KiB)}},
 	}, attrsByKey(record.Attributes))
+	assert.NotContains(t, attrsByKey(record.Attributes), "upstream.error_message")
+	actualAttrs := attrsByKey(record.Attributes)
+	assert.NotContains(t, actualAttrs, "io.request_body")
+	assert.NotContains(t, actualAttrs, "io.response_body")
+	assert.NotContains(t, actualAttrs, "requested.model")
+	assert.Contains(t, actualAttrs["upstream.error_response"].GetStringValue(), "private-content-echo")
 }
 
 func TestRecordCallLog_OffDoesNotAlertRetryableFailures(t *testing.T) {
@@ -278,11 +317,98 @@ func TestRecordCallLog_OffDoesNotAlertRetryableFailures(t *testing.T) {
 	ctx := buf.WithContext(context.Background())
 	for _, status := range []int64{408, 429, 503} {
 		base := otel.NewAttrBuilder(1).Int64("upstream.status_code", status).Build()
-		s.recordCallLog(ctx, base, 42, true, []byte("secret-request"), []byte("secret-response"), false)
+		s.recordCallLog(ctx, base, 42, &providers.UpstreamErrorResponse{Status: int(status)}, []byte("secret-request"), []byte("secret-response"), false)
 	}
 	otel.Flush(ctx)
 	require.NoError(t, em.Shutdown(context.Background()))
 	assert.Zero(t, coll.count(t))
+}
+
+func TestPermanentErrorDiagnostics_LogsResponseWithoutTrustingUnknownProviderType(t *testing.T) {
+	proxyErr := &providers.UpstreamErrorResponse{
+		Status: http.StatusBadRequest,
+		Headers: http.Header{
+			"X-Snowflake-Query-Id": {"invalid query id"},
+			"X-Request-Id":         {"request-123"},
+		},
+		Body: []byte(`{"error":{"type":"private-type-value","message":"private-message-value"}}`),
+	}
+	attrs := attrsByKey(permanentErrorDiagnosticAttrs(proxyErr, 23, nil))
+
+	assert.Equal(t, string(permanentErrorClassUnclassified), attrs["upstream.error_class"].GetStringValue())
+	assert.Equal(t, string(errorBodyFormatJSON), attrs["upstream.error_body_format"].GetStringValue())
+	assert.Equal(t, string(proxyErr.Body), attrs["upstream.error_response"].GetStringValue())
+	assert.Equal(t, "request-123", attrs["upstream.request_id"].GetStringValue())
+	assert.NotContains(t, attrs, "upstream.error_type")
+	assert.NotContains(t, attrs["upstream.request_id"].GetStringValue(), "invalid query id")
+}
+
+func TestPermanentErrorDiagnostics_BoundsAndRedactsErrorResponse(t *testing.T) {
+	responseBody := []byte(strings.Repeat("x", maxLoggedErrorResponseBytes+10))
+	proxyErr := &providers.UpstreamErrorResponse{Status: http.StatusBadRequest, Body: responseBody}
+	redact := func(content string, kind ContentKind) string {
+		assert.Equal(t, string(responseBody), content)
+		assert.Equal(t, ContentKindResponse, kind)
+		return strings.Repeat("r", maxLoggedErrorResponseBytes+10)
+	}
+
+	attrs := attrsByKey(permanentErrorDiagnosticAttrs(proxyErr, 1, redact))
+
+	assert.Equal(t, strings.Repeat("r", maxLoggedErrorResponseBytes), attrs["upstream.error_response"].GetStringValue())
+	assert.Equal(t, true, attrs["upstream.error_response_truncated"].GetBoolValue())
+}
+
+func TestPermanentErrorDiagnostics_TruncatesOnUTF8Boundary(t *testing.T) {
+	responseBody := append([]byte(strings.Repeat("a", maxLoggedErrorResponseBytes-1)), []byte("é")...)
+	proxyErr := &providers.UpstreamErrorResponse{
+		Status: http.StatusBadRequest,
+		Body:   responseBody,
+	}
+	attrs := attrsByKey(permanentErrorDiagnosticAttrs(proxyErr, 1, nil))
+	response := attrs["upstream.error_response"].GetStringValue()
+	assert.LessOrEqual(t, len(response), maxLoggedErrorResponseBytes)
+	assert.True(t, utf8.ValidString(response))
+	assert.Equal(t, strings.Repeat("a", maxLoggedErrorResponseBytes-1), response)
+	assert.True(t, attrs["upstream.error_response_truncated"].GetBoolValue())
+}
+
+func TestPermanentErrorDiagnostics_ClassifiesCappedJSONAndGeminiStatus(t *testing.T) {
+	cappedJSON := append([]byte(`{"error":{"type":"invalid_request_error","message":"`), bytes.Repeat([]byte("x"), providers.MaxBufferedErrorBytes)...)
+	attrs := attrsByKey(permanentErrorDiagnosticAttrs(&providers.UpstreamErrorResponse{
+		Status: http.StatusBadRequest, Body: cappedJSON, BodyBytes: int64(len(cappedJSON)), BodyCapped: true,
+	}, 1, nil))
+	assert.Equal(t, string(permanentErrorClassInvalidRequest), attrs["upstream.error_class"].GetStringValue())
+	assert.Equal(t, string(errorBodyFormatJSON), attrs["upstream.error_body_format"].GetStringValue())
+	assert.True(t, attrs["upstream.error_body_capped"].GetBoolValue())
+
+	geminiAttrs := attrsByKey(permanentErrorDiagnosticAttrs(&providers.UpstreamErrorResponse{
+		Status: http.StatusBadRequest, Body: []byte(`{"error":{"status":"INVALID_ARGUMENT"}}`),
+	}, 1, nil))
+	assert.Equal(t, string(permanentErrorClassInvalidRequest), geminiAttrs["upstream.error_class"].GetStringValue())
+}
+
+func TestClassifyPermanentError_ResponsesUnsupportedRequiresResponsesSurface(t *testing.T) {
+	proxyErr := &providers.UpstreamErrorResponse{Status: http.StatusNotFound}
+	assert.Equal(t, permanentErrorClassNotFound, classifyPermanentError(proxyErr, false))
+	assert.Equal(t, permanentErrorClassResponsesUnsupported, classifyPermanentError(proxyErr, true))
+}
+
+func TestRequestSizeBucketFor(t *testing.T) {
+	testCases := []struct {
+		requestBytes int
+		want         requestSizeBucket
+	}{
+		{requestBytes: 0, want: requestSizeBucketEmpty},
+		{requestBytes: 1, want: requestSizeBucketUnder16KiB},
+		{requestBytes: 16<<10 - 1, want: requestSizeBucketUnder16KiB},
+		{requestBytes: 16 << 10, want: requestSizeBucket16To64KiB},
+		{requestBytes: 64 << 10, want: requestSizeBucket64To256KiB},
+		{requestBytes: 256 << 10, want: requestSizeBucket256KiBTo1MiB},
+		{requestBytes: 1 << 20, want: requestSizeBucketAtLeast1MiB},
+	}
+	for _, testCase := range testCases {
+		assert.Equal(t, testCase.want, requestSizeBucketFor(testCase.requestBytes))
+	}
 }
 
 func TestRecordCallLog_FullCapturesBodies(t *testing.T) {
@@ -292,7 +418,7 @@ func TestRecordCallLog_FullCapturesBodies(t *testing.T) {
 	buf := otel.NewBuffer(em)
 	ctx := buf.WithContext(context.Background())
 	base := otel.NewAttrBuilder(1).String("decision.model", "claude-opus-4-8").Build()
-	s.recordCallLog(ctx, base, 42, false, []byte(`{"req":1}`), []byte(`{"resp":2}`), false)
+	s.recordCallLog(ctx, base, 42, nil, []byte(`{"req":1}`), []byte(`{"resp":2}`), false)
 	otel.Flush(ctx)
 
 	require.NoError(t, em.Shutdown(context.Background()))
@@ -311,7 +437,7 @@ func TestRecordCallLog_HashedOmitsRawText(t *testing.T) {
 
 	buf := otel.NewBuffer(em)
 	ctx := buf.WithContext(context.Background())
-	s.recordCallLog(ctx, nil, 42, false, []byte("secret-prompt"), []byte("secret-response"), false)
+	s.recordCallLog(ctx, nil, 42, nil, []byte("secret-prompt"), []byte("secret-response"), false)
 	otel.Flush(ctx)
 
 	require.NoError(t, em.Shutdown(context.Background()))
@@ -340,7 +466,7 @@ func TestDeferredCallLog_ReadsBodyAtRunTime(t *testing.T) {
 	base := otel.NewAttrBuilder(1).String("decision.model", "m").Build()
 	h.fn = func() {
 		body, trunc := capturedResponse(cw)
-		s.recordCallLog(ctx, base, 42, false, []byte("req"), body, trunc)
+		s.recordCallLog(ctx, base, 42, nil, []byte("req"), body, trunc)
 		otel.Flush(ctx)
 	}
 
@@ -372,7 +498,7 @@ func TestRecordCallLog_RedactorApplied(t *testing.T) {
 
 	buf := otel.NewBuffer(em)
 	ctx := buf.WithContext(context.Background())
-	s.recordCallLog(ctx, nil, 42, false, []byte("raw-req"), []byte("raw-resp"), false)
+	s.recordCallLog(ctx, nil, 42, nil, []byte("raw-req"), []byte("raw-resp"), false)
 	otel.Flush(ctx)
 
 	require.NoError(t, em.Shutdown(context.Background()))

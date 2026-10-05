@@ -49,6 +49,7 @@ func TestWritePassthroughError_WritesBodyLogsAndReturnsStatusError(t *testing.T)
 	upstreamBody := "upstream failure detail"
 	resp := &http.Response{
 		StatusCode: http.StatusBadGateway,
+		Header:     http.Header{"X-Request-Id": {"upstream-req-1"}},
 		Body:       http.NoBody,
 	}
 	resp.Body = io.NopCloser(strings.NewReader(upstreamBody))
@@ -60,6 +61,9 @@ func TestWritePassthroughError_WritesBodyLogsAndReturnsStatusError(t *testing.T)
 	var statusErr *providers.UpstreamStatusError
 	require.ErrorAs(t, err, &statusErr)
 	assert.Equal(t, http.StatusBadGateway, statusErr.Status)
+	assert.Equal(t, upstreamBody, string(statusErr.Body))
+	assert.Equal(t, int64(len(upstreamBody)), statusErr.BodyBytes)
+	assert.Equal(t, "upstream-req-1", statusErr.Headers.Get("X-Request-Id"))
 	assert.Equal(t, upstreamBody, rec.Body.String())
 	assert.Equal(t, 1, firstByteCalls)
 	assert.Equal(t, 1, eofCalls)
@@ -74,6 +78,23 @@ func TestWritePassthroughError_NilHooksAreSafe(t *testing.T) {
 	err := WritePassthroughError(context.Background(), rec, resp, nil, nil, "upstream failed")
 	require.Error(t, err)
 	assert.Equal(t, "boom", rec.Body.String())
+}
+
+func TestWritePassthroughError_BoundsCapturedBodyAndCountsFullBody(t *testing.T) {
+	const bodyLength = 2048
+	upstreamBody := strings.Repeat("x", bodyLength)
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}
+	rec := httptest.NewRecorder()
+	err := WritePassthroughError(context.Background(), rec, resp, nil, nil, "upstream failed")
+
+	var statusErr *providers.UpstreamStatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Len(t, statusErr.Body, 1024)
+	assert.Equal(t, int64(bodyLength), statusErr.BodyBytes)
+	assert.Equal(t, upstreamBody, rec.Body.String())
 }
 
 func TestLogUpstreamStatus_DropsBodyPreviewWhenContentLoggingDisallowed(t *testing.T) {
@@ -104,7 +125,7 @@ func TestLogUpstreamStatus_KeepsBodyPreviewWhenContentLoggingAllowed(t *testing.
 	assert.Contains(t, buf.String(), "err-echo")
 }
 
-func TestLogUpstreamStatus_KeepsOnlyErrorTypeWhenContentLoggingDisallowed(t *testing.T) {
+func TestLogUpstreamStatus_KeepsOnlyAllowlistedErrorTypeWhenContentLoggingDisallowed(t *testing.T) {
 	cases := []struct {
 		name     string
 		body     string
@@ -116,8 +137,17 @@ func TestLogUpstreamStatus_KeepsOnlyErrorTypeWhenContentLoggingDisallowed(t *tes
 			wantType: "invalid_request_error",
 		},
 		{
+			name:     "openai compatible service unavailable",
+			body:     `{"error":{"type":"service_unavailable","message":"echoed secret-fragment"}}`,
+			wantType: "service_unavailable",
+		},
+		{
 			name: "top-level message only",
 			body: `{"message":"echoed secret-fragment","request_id":"x"}`,
+		},
+		{
+			name: "unknown error type",
+			body: `{"error":{"type":"secret-fragment","message":"echoed secret-fragment"}}`,
 		},
 		{
 			name: "non-json body",

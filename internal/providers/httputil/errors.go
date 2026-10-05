@@ -54,9 +54,9 @@ func (c HeaderCapture) WriteHeader(int) {}
 // ERROR except 429 (routine rate-limit signal handled via failover), which
 // logs at WARN.
 //
-// When content logging is disallowed the raw body_preview is dropped, but the
-// provider's structured error type is kept as upstream_error_type. The error
-// message is not kept because providers can echo request content into it.
+// When content logging is disallowed the raw body_preview is dropped, while a
+// known provider error type may be kept as upstream_error_type. Error messages
+// and unknown type values are omitted because providers can echo request content.
 //
 // ctx is load-bearing: on the global logger the body was written but not
 // joinable to the request, so filtering by session never surfaced it.
@@ -89,8 +89,10 @@ func upstreamErrorTypeAttrs(body string) []any {
 		return nil
 	}
 	for _, path := range []string{"error.type", "type"} {
-		if r := gjson.Get(body, path); r.Type == gjson.String && r.Str != "error" {
-			return []any{"upstream_error_type", r.Str}
+		if r := gjson.Get(body, path); r.Type == gjson.String {
+			if knownType, ok := providers.KnownProviderErrorType(r.Str); ok {
+				return []any{"upstream_error_type", string(knownType)}
+			}
 		}
 	}
 	return nil
@@ -119,5 +121,10 @@ func WritePassthroughError(ctx context.Context, w http.ResponseWriter, resp *htt
 	if copyErr != nil {
 		return copyErr
 	}
-	return &providers.UpstreamStatusError{Status: resp.StatusCode}
+	return &providers.UpstreamStatusError{
+		Status:    resp.StatusCode,
+		Headers:   resp.Header.Clone(),
+		Body:      append([]byte(nil), snip[:n]...),
+		BodyBytes: int64(n) + rest,
+	}
 }
