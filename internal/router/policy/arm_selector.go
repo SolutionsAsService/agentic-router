@@ -6,6 +6,7 @@ import (
 
 	"weave-os/router/internal/router"
 	"weave-os/router/internal/router/escalation"
+	"weave-os/router/internal/router/taskdomain"
 )
 
 // ErrNoEligibleArm is returned when deterministic selection exhausts every
@@ -14,6 +15,7 @@ var ErrNoEligibleArm = errors.New("no eligible arm in any ranked group")
 
 // SelectionInput is the content-free classification the router selects an arm from.
 type SelectionInput struct {
+	TaskDomain                       *taskdomain.Outcome
 	Strategy                         router.Strategy
 	ExecutionMode                    string
 	RouteID                          string
@@ -63,6 +65,7 @@ func selectionInputFor(strategy router.Strategy, executionMode string, req route
 		candidateRosterIDs = append(candidateRosterIDs, candidate.RosterID)
 	}
 	input := SelectionInput{
+		TaskDomain:                       res.TaskDomain,
 		Strategy:                         strategy,
 		ExecutionMode:                    executionMode,
 		RouteID:                          res.RouteID,

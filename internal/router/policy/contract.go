@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"weave-os/router/internal/router"
+	"weave-os/router/internal/router/taskdomain"
 )
 
 // SchemaVersionV1 is the first stable policy-sidecar wire contract.
@@ -83,6 +84,7 @@ type StrategySpec struct {
 
 // Query contains the strategy-neutral request context supplied to a policy.
 type Query struct {
+	TaskDomain           *taskdomain.Input
 	ClassifierPrediction *router.ClassifierPrediction
 	SchemaVersion        string
 	Strategy             router.Strategy
@@ -118,6 +120,7 @@ type Query struct {
 
 // Result is a policy sidecar's selected candidate and decision metadata.
 type Result struct {
+	TaskDomain           *taskdomain.Outcome
 	SchemaVersion        string
 	RouteID              string
 	ArmID                string

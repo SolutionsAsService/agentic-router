@@ -17,6 +17,7 @@ import (
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/router"
 	"weave-os/router/internal/router/policy"
+	"weave-os/router/internal/router/taskdomain"
 )
 
 // DefaultTimeout bounds a single delegated policy decision. It has to hold more
@@ -84,6 +85,7 @@ const (
 
 // Client calls a versioned policy sidecar.
 type Client struct {
+	taskDomain     taskdomain.Resolver
 	baseURL        string
 	client         *http.Client
 	timeout        time.Duration
@@ -538,6 +540,13 @@ type previewResponse struct {
 
 // Decide posts the supplied candidate set and returns the sidecar selection.
 func (c *Client) Decide(ctx context.Context, query policy.Query) (policy.Result, error) {
+	if c.taskDomain != nil && query.ExecutionMode == policy.ExecutionModeServing && query.TaskDomain != nil {
+		return c.decideWithTaskDomain(ctx, query)
+	}
+	return c.decide(ctx, query)
+}
+
+func (c *Client) decide(ctx context.Context, query policy.Query) (policy.Result, error) {
 	body, err := marshalRouteRequest(query)
 	if err != nil {
 		return policy.Result{}, err

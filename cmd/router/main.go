@@ -1035,9 +1035,19 @@ func main() {
 	var servingAdmission *middleware.ServingAdmissionConfig
 	testPlansEnabled := strings.EqualFold(config.GetOr("ROUTER_TEST_PLANS_ENABLED", "false"), "true")
 	policyEnvironmentRaw := strings.TrimSpace(config.GetOr("ROUTER_POLICY_ENVIRONMENT", ""))
+	taskRuntime, taskErr := loadTaskDomainRuntime(pool)
+	if taskErr != nil {
+		logger.Error("Task classifier configuration invalid; refusing to boot", "err", taskErr)
+		panic(taskErr)
+	}
+	if taskRuntime != nil {
+		taskSweepCtx, cancelTaskSweep := context.WithCancel(context.Background())
+		defer cancelTaskSweep()
+		safeGo(logger, "task-domain-sweep", func() { taskRuntime.sweep(taskSweepCtx) })
+	}
 	if managedServingEnabled() {
 		prepareCtx, cancelPrepare := context.WithTimeout(context.Background(), 60*time.Second)
-		admission, baseline, closeRegistry, err := buildManagedServingRuntime(prepareCtx, availableProviders)
+		admission, baseline, closeRegistry, err := buildManagedServingRuntime(prepareCtx, availableProviders, taskRuntime)
 		cancelPrepare()
 		if err != nil {
 			logger.Error("Managed worker preparation failed; refusing to boot", "target", config.GetOr("ROUTER_SERVING_TARGET", ""), "registry_uri", config.GetOr("ROUTER_SERVING_REGISTRY_URI", ""), "err", err)

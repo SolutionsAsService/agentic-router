@@ -1,6 +1,6 @@
 {
   "schema_version": "inference_policy_registry_v2",
-  "registry_revision": "sha256:c43901422f1722aa307fe7b75612c2c4335921236e2ce678acea5359089b8eff",
+  "registry_revision": "sha256:f4aeff840c5c90e7d0d6c16e590389c282e0e6b9d1a881f35a3b4a3becdf507f",
   "policies": [
     {
       "purpose": "agent_shadow_evaluation",
@@ -631,6 +631,29 @@
         "kind": "binding"
       },
       "migration_status": "executor"
+    },
+    {
+      "optional": true,
+      "purpose": "task_domain_classification",
+      "dispatch_class": "control_plane",
+      "policy_id": "control-domain-classification",
+      "policy_revision": "1",
+      "owner": "@steventohme",
+      "rationale": "Classify the initial logical user task with an authenticated, digest-pinned Qwen service concurrently with complexity. The service returns only five domain bits; Go retains selection authority. Timeout or invalid/unavailable evidence retains baseline ranking, without retry or a provider fallback.",
+      "selection_strategy": "none",
+      "candidate_source": "deployment",
+      "hard_constraints": null,
+      "override_precedence": null,
+      "budget": {
+        "source": "policy",
+        "max_attempts": 1,
+        "timeout_millis": 3000,
+        "max_output_tokens": 16
+      },
+      "fallback": {
+        "kind": "none"
+      },
+      "migration_status": "non_inference"
     },
     {
       "purpose": "title_generation",

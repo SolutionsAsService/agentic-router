@@ -34,7 +34,7 @@ func (e *RequestEnvelope) ConversationMessages() []ConversationMessage {
 	}
 	switch e.format {
 	case FormatAnthropic:
-		return e.anthropicConversationMessages()
+		return e.anthropicConversationMessages(false)
 	case FormatOpenAI:
 		return e.openAIConversationMessages()
 	case FormatGemini:
@@ -44,7 +44,17 @@ func (e *RequestEnvelope) ConversationMessages() []ConversationMessage {
 	}
 }
 
-func (e *RequestEnvelope) anthropicConversationMessages() []ConversationMessage {
+// ConversationMessagesWithClientText retains injected-only messages so callers
+// can distinguish command acknowledgements from truncated conversation history.
+// Messages with visible user text keep the normal injected-block filtering.
+func (e *RequestEnvelope) ConversationMessagesWithClientText() []ConversationMessage {
+	if e != nil && e.format == FormatAnthropic {
+		return e.anthropicConversationMessages(true)
+	}
+	return e.ConversationMessages()
+}
+
+func (e *RequestEnvelope) anthropicConversationMessages(includeClientText bool) []ConversationMessage {
 	out := make([]ConversationMessage, 0)
 	if text := strings.TrimSpace(systemTextGJSON(gjson.GetBytes(e.body, "system"))); text != "" {
 		out = append(out, ConversationMessage{Role: "system", Text: text})
@@ -55,9 +65,13 @@ func (e *RequestEnvelope) anthropicConversationMessages() []ConversationMessage 
 			return true
 		}
 		content := msg.Get("content")
+		text := textForRole(role, content)
+		if includeClientText && text == "" {
+			text = contentTextGJSON(content)
+		}
 		out = append(out, ConversationMessage{
 			Role:        role,
-			Text:        textForRole(role, content),
+			Text:        text,
 			ToolCalls:   anthropicToolCalls(content),
 			ToolResults: anthropicToolResults(content),
 		})

@@ -228,6 +228,7 @@ func scoresWithDomainPreferences(
 	profile DomainProfile,
 ) (map[string]float32, map[string]router.SelectionScoreComponents, bool) {
 	scores := Scores(roster, label, cluster, qualityBias)
+	corrections := make(map[string]float32)
 	domainActive := false
 	if beta := TerminalInfluence(profile); evidence != nil && beta > 0 {
 		alpha := roster.Ranking.Alpha[label]
@@ -237,6 +238,7 @@ func scoresWithDomainPreferences(
 		for arm, score := range scores {
 			cell := evidence.Arms[arm]
 			correction := float32(alpha * beta * (*cell.TerminalQuality - cell.GlobalWII))
+			corrections[arm] = correction
 			scores[arm] = score + correction
 			domainActive = domainActive || scores[arm] != score
 		}
@@ -255,7 +257,7 @@ func scoresWithDomainPreferences(
 	for arm, score := range scores {
 		baseID, _ := hmm.SplitEffort(arm)
 		catalogID := hmm.CatalogIDForRoster(baseID)
-		components := router.SelectionScoreComponents{BaseScore: score}
+		components := router.SelectionScoreComponents{BaseScore: score - corrections[arm], TaskDomainCorrection: corrections[arm]}
 		if rank, preferred := preferredRanks[catalogID]; preferred {
 			components.PreferredModelBonus = float32(preferredModelBonus / float64(rank+1))
 		}
@@ -266,7 +268,7 @@ func scoresWithDomainPreferences(
 			boundedFactor := math.Min(factor, 1)
 			components.SubscriptionCostBonus = float32(subscriptionBonus * (1 - boundedFactor))
 		}
-		components.TotalScore = components.BaseScore + components.PreferredModelBonus + components.SubscriptionStateBonus + components.SubscriptionCostBonus
+		components.TotalScore = score + components.PreferredModelBonus + components.SubscriptionStateBonus + components.SubscriptionCostBonus
 		scores[arm] = components.TotalScore
 		componentsByArm[arm] = components
 	}

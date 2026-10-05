@@ -12,6 +12,7 @@ import (
 
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router/catalog"
+	"weave-os/router/internal/router/taskdomain"
 )
 
 const (
@@ -525,6 +526,20 @@ func defaultPolicySpecs() []PolicySpec {
 	}
 
 	return []PolicySpec{
+		{
+			Purpose:           PurposeTaskDomainClassification,
+			Optional:          true,
+			DispatchClass:     DispatchClassControlPlane,
+			PolicyID:          "control-domain-classification",
+			PolicyRevision:    "1",
+			Owner:             inferencePolicyOwner,
+			Rationale:         "Classify the initial logical user task with an authenticated, digest-pinned Qwen service concurrently with complexity. The service returns only five domain bits; Go retains selection authority. Timeout or invalid/unavailable evidence retains baseline ranking, without retry or a provider fallback.",
+			SelectionStrategy: SelectionStrategyNone,
+			CandidateSource:   CandidateSourceDeployment,
+			Budget:            BudgetSpec{Source: BudgetSourcePolicy, MaxAttempts: 1, TimeoutMillis: taskdomain.Timeout.Milliseconds(), MaxOutputTokens: 16},
+			Fallback:          FallbackSpec{Kind: FallbackKindNone},
+			MigrationStatus:   MigrationStatusNonInference,
+		},
 		{
 			Purpose:            PurposeEscalationJudge,
 			Optional:           true,

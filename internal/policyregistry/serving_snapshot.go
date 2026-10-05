@@ -3,6 +3,7 @@ package policyregistry
 import (
 	"context"
 	"errors"
+	"maps"
 
 	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -125,6 +126,7 @@ func (c *ServingRuntimeCache) Snapshot(ctx context.Context, admission SessionRel
 		return nil, errors.New("admitted policy contains arms absent from the worker catalog")
 	}
 	candidate := Candidate{
+		AuxiliaryModels: maps.Clone(prepared.Candidate.Classifier.AuxiliaryModels),
 		HeadSnapshot: HeadSnapshot{
 			// Binding generations are request-scoped, not properties of cached bytes.
 			Generation: 0,

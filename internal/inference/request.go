@@ -29,6 +29,7 @@ const (
 	PurposePolicySidecarPreview      Purpose = "policy_sidecar_preview"
 	PurposePolicySidecarOutcome      Purpose = "policy_sidecar_outcome"
 	PurposePolicySidecarFeedback     Purpose = "policy_sidecar_feedback"
+	PurposeTaskDomainClassification  Purpose = "task_domain_classification"
 	PurposeClusterEmbedding          Purpose = "cluster_embedding"
 	PurposeSemanticCacheEmbedding    Purpose = "semantic_cache_embedding"
 	PurposeNativeWebSearch           Purpose = "native_web_search"

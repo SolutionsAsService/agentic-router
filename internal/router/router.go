@@ -6,6 +6,7 @@ import (
 
 	"weave-os/router/internal/router/eligibility"
 	"weave-os/router/internal/router/escalation"
+	"weave-os/router/internal/router/taskdomain"
 )
 
 // WireFormat identifies the client-facing request representation. It is kept
@@ -87,6 +88,7 @@ type Overrides struct {
 }
 
 type Request struct {
+	TaskDomain *taskdomain.Input
 	// ClassifierPrediction is set only after release-bound durable classification.
 	ClassifierPrediction *ClassifierPrediction `json:"-"`
 	// Escalation constrains automatic class selection for an opted-in session.
@@ -441,6 +443,7 @@ type RoutingMetadata struct {
 // decision. It captures the classifier ordering, exact eligible roster IDs,
 // bounded preference inputs, effective orders and typed hard exclusions.
 type SelectionTrace struct {
+	TaskDomain                       *taskdomain.Outcome                            `json:"task_domain,omitempty"`
 	ClassifierRanking                []string                                       `json:"classifier_ranking"`
 	Harness                          string                                         `json:"harness"`
 	ForcedGroup                      string                                         `json:"forced_group,omitempty"`
@@ -462,6 +465,7 @@ type SelectionTrace struct {
 // SelectionScoreComponents records the bounded terms behind an arm's final score.
 type SelectionScoreComponents struct {
 	BaseScore              float32 `json:"base_score"`
+	TaskDomainCorrection   float32 `json:"task_domain_correction,omitempty"`
 	PreferredModelBonus    float32 `json:"preferred_model_bonus,omitempty"`
 	SubscriptionStateBonus float32 `json:"subscription_state_bonus,omitempty"`
 	SubscriptionCostBonus  float32 `json:"subscription_cost_bonus,omitempty"`

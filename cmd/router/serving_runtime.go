@@ -105,7 +105,7 @@ func strategyList(strategies []router.Strategy) string {
 
 func osEnvLookup(key string) (string, bool) { return os.LookupEnv(key) }
 
-func buildManagedServingRuntime(ctx context.Context, availableProviders map[string]struct{}) (*middleware.ServingAdmissionConfig, *policyregistry.Snapshot, func(), error) {
+func buildManagedServingRuntime(ctx context.Context, availableProviders map[string]struct{}, taskRuntimes ...*taskDomainRuntime) (*middleware.ServingAdmissionConfig, *policyregistry.Snapshot, func(), error) {
 	signer, err := policyregistry.NewAssertionSigner([]byte(strings.TrimSpace(config.GetOr("ROUTER_SERVING_ASSERTION_KEY", ""))), time.Now)
 	if err != nil {
 		return nil, nil, nil, err
@@ -131,6 +131,7 @@ func buildManagedServingRuntime(ctx context.Context, availableProviders map[stri
 	cache, err := policyregistry.NewServingRuntimeCache(registry, hmmPolicySnapshotBuilder(
 		availableProviders, managedServingStrategies,
 		config.GetOr("ROUTER_HMM_SIDECAR_AUTH", policySidecarAuthGoogleIDToken), timeout, attemptTimeout,
+		taskRuntimes...,
 	))
 	if err != nil {
 		closeRegistry()

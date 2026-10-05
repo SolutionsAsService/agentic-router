@@ -25,6 +25,7 @@ const (
 	PurposePolicySidecarPreview      = inference.PurposePolicySidecarPreview
 	PurposePolicySidecarOutcome      = inference.PurposePolicySidecarOutcome
 	PurposePolicySidecarFeedback     = inference.PurposePolicySidecarFeedback
+	PurposeTaskDomainClassification  = inference.PurposeTaskDomainClassification
 	PurposeClusterEmbedding          = inference.PurposeClusterEmbedding
 	PurposeSemanticCacheEmbedding    = inference.PurposeSemanticCacheEmbedding
 	PurposeNativeWebSearch           = inference.PurposeNativeWebSearch
@@ -51,6 +52,7 @@ var knownPurposes = []Purpose{
 	PurposePolicySidecarPreview,
 	PurposePolicySidecarOutcome,
 	PurposePolicySidecarFeedback,
+	PurposeTaskDomainClassification,
 	PurposeClusterEmbedding,
 	PurposeSemanticCacheEmbedding,
 	PurposeNativeWebSearch,

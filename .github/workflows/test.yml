@@ -25,6 +25,7 @@ jobs:
       statusline: ${{ steps.filter.outputs.statusline }}
       installer: ${{ steps.filter.outputs.installer }}
       hmm: ${{ steps.filter.outputs.hmm }}
+      task-domain: ${{ steps.filter.outputs.task-domain }}
       go: ${{ steps.go-relevance.outputs.go_changed }}
     steps:
       - name: Checkout
@@ -55,6 +56,11 @@ jobs:
               - 'Dockerfile'
               - 'docker-compose.yml'
               - 'Makefile'
+              - '.github/workflows/**'
+            task-domain:
+              - 'sidecars/task-domain/**'
+              - 'internal/router/taskdomain/**'
+              - 'internal/policyclient/task_domain*'
               - '.github/workflows/**'
 
       # Push and workflow_dispatch runs have no base SHA, so the classifier
@@ -208,6 +214,11 @@ jobs:
           ROUTER_TEST_DATABASE_URL: postgres://router:router@localhost:5432/router?sslmode=disable&search_path=router
         run: go run ./scripts/classifier_session_check
 
+      - name: Check task profile persistence on ephemeral Postgres
+        env:
+          ROUTER_TEST_DATABASE_URL: postgres://router:router@localhost:5432/router?sslmode=disable&search_path=router
+        run: go run ./scripts/task_domain_check
+
       - name: Check bounded database waits on ephemeral Postgres
         env:
           ROUTER_TEST_DATABASE_URL: postgres://router:router@localhost:5432/router?sslmode=disable&search_path=router
@@ -331,6 +342,23 @@ jobs:
           make test-install
           bash install/pi-router/test/opencode_smoke.sh
 
+  test-task-domain:
+    name: Test task domain service contract
+    needs: changed-paths
+    if: ${{ needs.changed-paths.outputs.task-domain == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.28"
+          python-version: "3.12.3"
+          enable-cache: true
+          cache-dependency-glob: sidecars/task-domain/uv.lock
+      - name: Test without GPU or checkpoint downloads
+        run: uv run --no-env-file --project sidecars/task-domain --locked --extra test pytest -q sidecars/task-domain/tests
+
   test-hmm-sidecar:
     name: Test frozen HMM sidecar
     needs: changed-paths
@@ -416,6 +444,7 @@ jobs:
       - test-statusline
       - test-install
       - test-hmm-sidecar
+      - test-task-domain
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -427,10 +456,12 @@ jobs:
           STATUSLINE_RESULT: ${{ needs.test-statusline.result }}
           INSTALLER_RESULT: ${{ needs.test-install.result }}
           HMM_SIDECAR_RESULT: ${{ needs.test-hmm-sidecar.result }}
+          TASK_DOMAIN_RESULT: ${{ needs.test-task-domain.result }}
           CHANGED_PATHS_RESULT: ${{ needs.changed-paths.result }}
           STATUSLINE_NEEDED: ${{ needs.changed-paths.outputs.statusline }}
           INSTALLER_NEEDED: ${{ needs.changed-paths.outputs.installer }}
           HMM_SIDECAR_NEEDED: ${{ needs.changed-paths.outputs.hmm }}
+          TASK_DOMAIN_NEEDED: ${{ needs.changed-paths.outputs.task-domain }}
           GO_CHECKS_NEEDED: ${{ needs.changed-paths.outputs.go }}
         run: |
           printf '%s\n' \
@@ -440,9 +471,11 @@ jobs:
             "Statusline: $STATUSLINE_RESULT" \
             "Installer: $INSTALLER_RESULT" \
             "HMM sidecar: $HMM_SIDECAR_RESULT" \
+            "Task domain: $TASK_DOMAIN_RESULT" \
             "Statusline needed: $STATUSLINE_NEEDED" \
             "Installer needed: $INSTALLER_NEEDED" \
             "HMM sidecar needed: $HMM_SIDECAR_NEEDED" \
+            "Task domain needed: $TASK_DOMAIN_NEEDED" \
             "Go checks needed: $GO_CHECKS_NEEDED"
 
           if [ "$CHANGED_PATHS_RESULT" != success ] || \
@@ -476,5 +509,11 @@ jobs:
             exit 1
           fi
           if [ "$HMM_SIDECAR_NEEDED" != true ] && [ "$HMM_SIDECAR_RESULT" != skipped ]; then
+            exit 1
+          fi
+          if [ "$TASK_DOMAIN_NEEDED" = true ] && [ "$TASK_DOMAIN_RESULT" != success ]; then
+            exit 1
+          fi
+          if [ "$TASK_DOMAIN_NEEDED" != true ] && [ "$TASK_DOMAIN_RESULT" != skipped ]; then
             exit 1
           fi

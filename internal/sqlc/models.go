@@ -1200,3 +1200,12 @@ type RouterSubscriberEntitlement struct {
 	CreatedAt                        pgtype.Timestamptz
 	UpdatedAt                        pgtype.Timestamptz
 }
+
+type RouterTaskDomainProfile struct {
+	ConversationKey string
+	RootSha256      string
+	ReleaseSha256   string
+	EvidenceSha256  string
+	Outcome         []byte
+	ExpiresAt       pgtype.Timestamptz
+}

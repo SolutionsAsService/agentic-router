@@ -3,7 +3,7 @@
 # Router Inference Policy Registry
 
 - Schema version: `inference_policy_registry_v2`
-- Registry revision: `sha256:c43901422f1722aa307fe7b75612c2c4335921236e2ce678acea5359089b8eff`
+- Registry revision: `sha256:f4aeff840c5c90e7d0d6c16e590389c282e0e6b9d1a881f35a3b4a3becdf507f`
 
 This static projection contains no tenant credentials, installation overrides, request content, or private gateway details. Migration status describes the current execution boundary; `legacy_direct` entries are inventory, not authorization for new call sites.
 
@@ -30,5 +30,6 @@ This static projection contains no tenant credentials, installation overrides, r
 | `probe` | `auxiliary_inference` | `aux-probe@2` | `deployment_hard_pin` | `deployment` | `catalog_binding`<br>`context_window`<br>`model_exclusions`<br>`provider_exclusions`<br>`spend` | `capability` | `binding` | `source=request` | `executor` | `@steventohme` | Serve provider and quota probes without creating a durable session pin. |
 | `semantic_cache_embedding` | `local_support` | `local-semantic-cache-embedding@1` | `none` | `local` | — | — | `none` | `source=local` | `non_inference` | `@steventohme` | Compute semantic-cache keys locally and independently from provider dispatch. |
 | `sub_agent_dispatch` | `auxiliary_inference` | `aux-sub-agent-dispatch@2` | `deployment_hard_pin` | `deployment` | `catalog_binding`<br>`context_window`<br>`model_exclusions`<br>`provider_exclusions`<br>`spend` | `capability` | `binding` | `source=request` | `executor` | `@steventohme` | Apply the reviewed deployment hard pin for sub-agent work while preserving tenant eligibility. |
+| `task_domain_classification` | `control_plane` | `control-domain-classification@1` | `none` | `deployment` | — | — | `none` | `source=policy attempts=1 timeout_ms=3000 max_output=16` | `non_inference` | `@steventohme` | Classify the initial logical user task with an authenticated, digest-pinned Qwen service concurrently with complexity. The service returns only five domain bits; Go retains selection authority. Timeout or invalid/unavailable evidence retains baseline ranking, without retry or a provider fallback. |
 | `title_generation` | `auxiliary_inference` | `aux-title-generation@2` | `deployment_hard_pin` | `deployment` | `catalog_binding`<br>`context_window`<br>`model_exclusions`<br>`provider_exclusions`<br>`spend` | `capability` | `binding` | `source=request` | `executor` | `@steventohme` | Keep hidden title-generation calls cheap and isolated from the main session pin. |
 | `upstream_model_listing` | `metadata_passthrough` | `metadata-upstream-model-listing@1` | `passthrough` | `deployment` | — | — | `none` | `source=deployment` | `non_inference` | `@steventohme` | List models from the operator-selected upstream endpoint without automatic inference selection. |

@@ -769,6 +769,7 @@ func (s *Service) runTurnLoop(
 	}
 	res.AuthoritativePerTurn = authoritativePolicyTurn(res.TurnType) &&
 		s.authoritativePerTurnSelection(ctx)
+	req.TaskDomain = taskDomainInput(ctx, env, apiKeyID, res.TurnType)
 	res.PinRole = roleForTier(res.RequestedTier)
 	// Resolve user-forced state before the policy's no-automatic-routing shortcut.
 	forceModelSessionKey := deriveForceModelSessionKeyForRequest(ctx, env, apiKeyID, threadSessionKey)

@@ -20,8 +20,17 @@ func hmmPolicySnapshotBuilder(
 	authMode string,
 	timeout time.Duration,
 	attemptTimeout time.Duration,
+	taskRuntimes ...*taskDomainRuntime,
 ) policyregistry.Builder {
 	return func(ctx context.Context, candidate policyregistry.Candidate) (map[router.Strategy]router.Router, error) {
+		var taskRuntime *taskDomainRuntime
+		if len(taskRuntimes) > 0 {
+			taskRuntime = taskRuntimes[0]
+		}
+		taskResolver, domainEvidence, evidenceSHA, err := taskRuntime.bind(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("bind task classifier: %w", err)
+		}
 		clientFactory := policyclient.NewGoogleIDToken
 		if candidate.ClassifierAudience != "" {
 			clientFactory = func(url string, timeout time.Duration, options ...policyclient.Option) (*policyclient.Client, error) {
@@ -34,6 +43,7 @@ func hmmPolicySnapshotBuilder(
 			timeout,
 			clientFactory,
 			policyclient.WithAttemptTimeout(attemptTimeout),
+			policyclient.WithTaskDomain(taskResolver),
 		)
 		if err != nil {
 			return nil, err
@@ -71,7 +81,7 @@ func hmmPolicySnapshotBuilder(
 		capabilities.HonorsPreferredModels = true
 		capabilities.SupportsRoutingDistribution = true
 
-		armSelector := selection.Selector(candidate.Policy)
+		armSelector := selection.SelectorWithDomainEvidence(candidate.Policy, domainEvidence, evidenceSHA)
 		routers := make(map[router.Strategy]router.Router, len(strategies))
 		for _, strategy := range strategies {
 			policyRouter := hmm.NewForStrategy(strategy, client, availableProviders)

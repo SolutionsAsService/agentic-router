@@ -32,6 +32,7 @@ type Loader interface {
 
 // Candidate is a fully read and cross-validated release awaiting runtime construction.
 type Candidate struct {
+	AuxiliaryModels    map[string]ObjectRef
 	HeadSnapshot       HeadSnapshot
 	Release            Release
 	Policy             *rosterdata.Roster

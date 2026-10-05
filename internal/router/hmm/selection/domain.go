@@ -11,17 +11,18 @@ import (
 	"time"
 
 	"weave-os/router/internal/router/hmm/rosterdata"
+	"weave-os/router/internal/router/taskdomain"
 )
 
 // Domain is one independent work-category bit, not a complexity label.
-type Domain string
+type Domain = taskdomain.Domain
 
 const (
-	DomainUI    Domain = "ui"
-	DomainLogic Domain = "logic"
-	DomainData  Domain = "data"
-	DomainInfra Domain = "infra"
-	DomainDocs  Domain = "docs"
+	DomainUI    = taskdomain.UI
+	DomainLogic = taskdomain.Logic
+	DomainData  = taskdomain.Data
+	DomainInfra = taskdomain.Infra
+	DomainDocs  = taskdomain.Docs
 )
 
 const (
@@ -32,7 +33,7 @@ const (
 
 // DomainProfile is absent when the classifier cannot establish a human-turn profile.
 // A present profile with no active bits is a distinct, valid prediction.
-type DomainProfile map[Domain]bool
+type DomainProfile = taskdomain.Profile
 
 // DomainArmEvidence retains exact-effort benchmark identity from the pinned snapshot.
 type DomainArmEvidence struct {
@@ -48,7 +49,7 @@ type domainRecipe struct {
 	Weights   map[string]float64 `json:"weights"`
 }
 
-// DomainEvidence is a version-bound, candidate-complete shadow scoring policy.
+// DomainEvidence is a version-bound, candidate-complete task scoring policy.
 type DomainEvidence struct {
 	SchemaVersion          string                       `json:"schema_version"`
 	RecipeVersion          string                       `json:"recipe_version"`

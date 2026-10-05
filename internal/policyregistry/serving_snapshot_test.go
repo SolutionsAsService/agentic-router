@@ -48,8 +48,11 @@ func TestServingRuntimeCacheEvictsWithoutChangingPinnedSnapshots(t *testing.T) {
 func TestServingRuntimeCacheReusesExactAdmission(t *testing.T) {
 	store, _, set := controllerFixture(t)
 	builds := 0
-	cache, err := policyregistry.NewServingRuntimeCache(store, func(context.Context, policyregistry.Candidate) (map[router.Strategy]router.Router, error) {
+	prepared, err := policyregistry.ReadPreparedSelection(context.Background(), store, set.Target, "", set.Default)
+	require.NoError(t, err)
+	cache, err := policyregistry.NewServingRuntimeCache(store, func(_ context.Context, candidate policyregistry.Candidate) (map[router.Strategy]router.Router, error) {
 		builds++
+		require.Equal(t, prepared.Candidate.Classifier.AuxiliaryModels, candidate.AuxiliaryModels, "admitted auxiliary identities must reach runtime composition")
 		return map[router.Strategy]router.Router{router.StrategyHMM: stubRouter{}}, nil
 	})
 	require.NoError(t, err)

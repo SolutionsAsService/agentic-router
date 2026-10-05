@@ -24,6 +24,7 @@ class SuiteID(StrEnum):
     INSTALL = "install"
     INSTALL_CLI = "install-cli"
     HMM = "hmm"
+    TASK_DOMAIN = "task-domain"
     FRONTEND = "frontend"
     DATABASE = "database"
     SMOKE = "smoke"
@@ -228,6 +229,13 @@ SUITES = (
         ("bash", "python3", "opencode"),
         integration=True,
         note="OpenCode conformance uses disposable localhost fixtures and enforces the driver's pinned CLI version.",
+    ),
+    Suite(
+        SuiteID.TASK_DOMAIN,
+        ("sidecars/task-domain/*", "internal/router/taskdomain/*", "internal/policyclient/task_domain*", ".github/*"),
+        (("uv", "run", "--no-env-file", "--project", "sidecars/task-domain", "--locked", "--extra", "test", "pytest", "-q", "sidecars/task-domain/tests"),),
+        ("uv",),
+        note="Synthetic predictor tests; no GPU, model downloads or provider calls.",
     ),
     Suite(
         SuiteID.HMM,

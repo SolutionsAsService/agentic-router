@@ -17,9 +17,20 @@ This page is the exhaustive reference; the [README](../README.md) has the
 - [Plan-aware subscription routing](#plan-aware-subscription-routing)
 - [Provider and model exclusions](#provider-and-model-exclusions)
 - [Policy sidecars](#policy-sidecars)
+- [Task-domain classifier](#task-domain-classifier)
 - [BYOK encryption](#byok-encryption)
 - [Telemetry (OpenTelemetry)](#telemetry-opentelemetry)
 - [Cluster-routing artifacts](#cluster-routing-artifacts)
+
+## Task-domain classifier
+
+`ROUTER_TASK_DOMAIN_BINDINGS_PATH` optionally points to a digest-verified local
+inventory of Qwen task classifier releases, HTTPS endpoints, bearer-secret env
+names and scoring evidence files. Unset means no task runtime is loaded; managed
+candidate admission, not this variable alone, enables task weighting. The worker
+requires the task-profile migration and writable router Postgres. See the
+[task-domain service guide](../sidecars/task-domain/README.md) for release format,
+admission, inference limits, caching/failure semantics and staged-model validation.
 
 ## Provider API keys
 
