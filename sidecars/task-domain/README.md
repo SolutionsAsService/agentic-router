@@ -92,9 +92,19 @@ uv sync --locked --extra qwen
 export TASK_DOMAIN_MODEL_PATH=/artifacts/model
 export TASK_DOMAIN_RELEASE_PATH=/artifacts/release.json
 export TASK_DOMAIN_RELEASE_SHA256=MANIFEST_SHA256
+export TORCH_DISABLE_NATIVE_JIT=1
 # Inject TASK_DOMAIN_BEARER from the deployment secret manager (at least 32 characters).
 uv run --locked --extra qwen python server.py
 ```
+
+`TORCH_DISABLE_NATIVE_JIT=1` (set in the Dockerfile) keeps Torch on its stock
+CUDA kernels; otherwise Qwen's rotary embedding JIT-compiles a Triton override on
+first use, which fails without a C compiler and adds compile latency to requests.
+Startup verifies the release, loads the model, then runs a priming pass and a
+verification pass over short and long synthetic inputs. The port opens only after
+every verification output is valid, so a TCP startup probe succeeds only after
+warmup; there is no separate ongoing readiness endpoint. Any warmup error exits the
+process instead of serving a cold or broken model.
 
 Alternatively build the included Dockerfile from the repository root. Serve port
 8095 behind authenticated-network TLS termination; the Go client accepts HTTPS

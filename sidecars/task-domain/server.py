@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Final
 
 import torch
 import uvicorn
 from transformers import AutoTokenizer, Qwen3_5ForCausalLM
 
-from app import create_app
+from app import create_app, warm_up
 from contract import MAX_INPUT_TOKENS, SYSTEM_PROMPT, verify_release
+
+WARMUP_TEXTS: Final = (
+    "Fix the failing unit test in the payment service.",
+    "Explain why this deployment configuration fails.\n" + "service: example\nreplicas: 3\n" * 600,
+)
 
 
 class QwenPredictor:
@@ -43,7 +49,9 @@ class QwenPredictor:
 def main() -> None:
     model_path: Path = Path(os.environ["TASK_DOMAIN_MODEL_PATH"])
     release_sha256: str = verify_release(Path(os.environ["TASK_DOMAIN_RELEASE_PATH"]), model_path, os.environ["TASK_DOMAIN_RELEASE_SHA256"])
-    app = create_app(QwenPredictor(model_path), release_sha256, os.environ["TASK_DOMAIN_BEARER"])
+    predictor: QwenPredictor = QwenPredictor(model_path)
+    app = create_app(predictor, release_sha256, os.environ["TASK_DOMAIN_BEARER"])
+    warm_up(predictor, WARMUP_TEXTS)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8095")), access_log=False)
 
 

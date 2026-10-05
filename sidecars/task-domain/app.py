@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import threading
+from collections.abc import Sequence
 from typing import Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
@@ -24,6 +25,16 @@ class ClassificationRequest(BaseModel):
     release_sha256: str
     projection_version: Literal["initial_logical_user_turn_v1"]
     user_text: str
+
+
+def warm_up(predictor: Predictor, texts: Sequence[str]) -> None:
+    # The first CUDA pass is slow enough to truncate generation; listen only once a repeat pass is valid.
+    for text in texts:
+        predictor.predict(text)
+    for index, text in enumerate(texts):
+        output, _ = predictor.predict(text)
+        if not OUTPUT.fullmatch(output):
+            raise RuntimeError(f"task classifier warmup produced invalid output for warmup input {index}")
 
 
 def create_app(predictor: Predictor, release_sha256: str, bearer: str) -> FastAPI:
