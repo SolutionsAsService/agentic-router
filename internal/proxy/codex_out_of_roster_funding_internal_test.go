@@ -41,8 +41,7 @@ type scriptedFundingClient struct {
 	attempts        []fundingAttempt
 }
 
-// Synthetic provider never bills subscription extra usage.
-func (*scriptedFundingClient) IncludedOnlySubscriptions() bool { return true }
+func (*scriptedFundingClient) SupportsSubscriptions() bool { return true }
 
 func (c *scriptedFundingClient) Proxy(ctx context.Context, decision router.Decision, prep providers.PreparedRequest, w http.ResponseWriter, _ *http.Request) error {
 	creds := CredentialsFromContext(ctx)

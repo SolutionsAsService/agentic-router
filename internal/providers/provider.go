@@ -17,11 +17,11 @@ import (
 	"weave-os/router/internal/router"
 )
 
-// IncludedOnlySubscriptionTransport is implemented only by adapters that enforce
-// rejection before consuming paid subscription extra usage. Quota observations
-// or a dedicated OAuth endpoint do not establish this guarantee.
-type IncludedOnlySubscriptionTransport interface {
-	IncludedOnlySubscriptions() bool
+// SubscriptionTransport identifies adapters that accept native subscription OAuth.
+// Account quota and overage observations govern whether a credential is usable;
+// this capability does not promise provider-enforced included-only billing.
+type SubscriptionTransport interface {
+	SupportsSubscriptions() bool
 }
 
 // UpstreamHeaderObserver records subscription rate-limit headroom (see

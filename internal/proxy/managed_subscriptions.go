@@ -189,7 +189,7 @@ func (s *Service) costNeutralSubscriptionServed(ctx context.Context) bool {
 func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model string) (context.Context, subscriptions.Lease, bool, error) {
 	poolProvider, eligible := managedSubscriptionProviderFromUpstream(provider, model)
 	if eligible && managedSubscriptionEnrollmentUnavailable(ctx) {
-		if credentials := CredentialsFromContext(ctx); credentials != nil && credentials.OAuth && s.includedOnlySubscriptionTransport(provider) {
+		if credentials := CredentialsFromContext(ctx); credentials != nil && credentials.OAuth && s.supportsSubscriptionTransport(provider) {
 			return ctx, subscriptions.Lease{}, false, nil
 		}
 		if subscriptionAttemptOnly(ctx) || paidFallbackForbidden(ctx) || !s.managedProviderFallbackAvailable(ctx, poolProvider) {
@@ -205,7 +205,7 @@ func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model 
 		}
 		return ctx, subscriptions.Lease{}, false, nil
 	}
-	if subscriptionAttemptOnly(ctx) && (!eligible || !s.includedOnlySubscriptionTransport(provider) || !managedSubscriptionEnrolled(ctx, poolProvider)) && !servedOnSubscription(ctx) {
+	if subscriptionAttemptOnly(ctx) && (!eligible || !s.supportsSubscriptionTransport(provider) || !managedSubscriptionEnrolled(ctx, poolProvider)) && !servedOnSubscription(ctx) {
 		return ctx, subscriptions.Lease{}, true, ErrSubscriptionPoolExhausted
 	}
 	if eligible && (claudeSubscriptionSuppressed(ctx) && provider == providers.ProviderAnthropic || codexSubscriptionSuppressed(ctx) && provider == providers.ProviderOpenAI) && !managedSubscriptionEnrolled(ctx, poolProvider) && !s.managedProviderFallbackAvailable(ctx, poolProvider) {
@@ -215,7 +215,7 @@ func (s *Service) leaseManagedSubscription(ctx context.Context, provider, model 
 		poolProvider == subscriptions.ProviderCodex && codexChatEndpoint(ctx) {
 		return ctx, subscriptions.Lease{}, false, nil
 	}
-	if !s.includedOnlySubscriptionTransport(provider) {
+	if !s.supportsSubscriptionTransport(provider) {
 		return ctx, subscriptions.Lease{}, false, nil
 	}
 	if current := CredentialsFromContext(ctx); current != nil && current.OAuth {
@@ -411,13 +411,13 @@ func managedSubscriptionResetAt(err error, now time.Time) time.Time {
 	return now.Add(time.Minute)
 }
 
-func (s *Service) includedOnlySubscriptionTransport(provider string) bool {
+func (s *Service) supportsSubscriptionTransport(provider string) bool {
 	client, err := s.clients.Client(provider)
 	if err != nil {
 		return false
 	}
-	transport, ok := client.(providers.IncludedOnlySubscriptionTransport)
-	return ok && transport.IncludedOnlySubscriptions()
+	transport, ok := client.(providers.SubscriptionTransport)
+	return ok && transport.SupportsSubscriptions()
 }
 
 // subscriptionAlternativeDecisions uses only the policy's request-compatible
@@ -505,7 +505,7 @@ func (s *Service) subscriptionAlternativeDecisions(ctx context.Context, req rout
 					continue
 				}
 			}
-			if !s.includedOnlySubscriptionTransport(binding.Provider) || !managedSubscriptionCanServe(ctx, binding.Provider, model) {
+			if !s.supportsSubscriptionTransport(binding.Provider) || !managedSubscriptionCanServe(ctx, binding.Provider, model) {
 				continue
 			}
 			alternatives = append(alternatives, router.Decision{Model: model, Provider: binding.Provider, Effort: effort, Metadata: selected.Metadata, Reason: selected.Reason})

@@ -19,12 +19,6 @@ import (
 	"weave-os/router/internal/subscriptions"
 )
 
-// Only this synthetic provider fixture enforces no extra-usage serving.
-// Production adapters intentionally do not implement this proof.
-type includedOnlySyntheticClient struct{ *openai.Client }
-
-func (*includedOnlySyntheticClient) IncludedOnlySubscriptions() bool { return true }
-
 // This exercises ingress, translation, provider HTTP dispatch, and response
 // translation. An exhausted request-local token must not strand linked capacity
 // merely because the requester has no API credential.
@@ -52,7 +46,7 @@ func TestVerificationSafeTransportDirectExhaustionUsesLinkedWithoutAPI(t *testin
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}\n\n")
 	}))
 	defer upstream.Close()
-	client := &includedOnlySyntheticClient{Client: openai.NewClient("", upstream.URL)}
+	client := openai.NewClient("", upstream.URL)
 	client.SetCodexBaseURL(upstream.URL)
 	leaser := &scriptedSubscriptionLeaser{leases: []subscriptions.Lease{{AccountID: "linked-account", AccessToken: "linked-token", ProviderAccount: "linked-provider-account"}}}
 	svc := NewService(staticRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: codexCoveredModel, Reason: "test"}}, map[string]providers.Client{providers.ProviderOpenAI: client}, nil, false, nil, nil, false, providers.ProviderOpenAI, codexCoveredModel, nil).WithManagedSubscriptions(leaser)
@@ -87,7 +81,7 @@ func TestVerificationSafeTransportManagedWinnerQuotaObservedFromHTTP(t *testing.
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}\n\n")
 	}))
 	defer upstream.Close()
-	client := &includedOnlySyntheticClient{Client: openai.NewClient("", upstream.URL)}
+	client := openai.NewClient("", upstream.URL)
 	client.SetCodexBaseURL(upstream.URL)
 	leaser := &scriptedSubscriptionLeaser{leases: []subscriptions.Lease{{AccountID: "quota-account", AccessToken: "quota-token", ProviderAccount: "quota-provider-account"}}}
 	observer := usage.NewObserver([]byte("synthetic-salt"), time.Hour, time.Now)

@@ -91,7 +91,7 @@ func TestVerificationSafeSubscriptionIngressConformance(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				client := &includedOnlySyntheticClient{Client: openai.NewClient("", server.URL)}
+				client := openai.NewClient("", server.URL)
 				client.SetCodexBaseURL(server.URL)
 				leaser := &scriptedSubscriptionLeaser{leases: []subscriptions.Lease{{AccountID: "10000000-0000-4000-8000-000000000001", OwnerID: "10000000-0000-4000-8000-000000000002", Tier: auth.SubscriptionTierShared, AccessToken: "synthetic-included-token", ProviderAccount: "synthetic-provider-account"}}}
 				svc := NewService(staticRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: codexCoveredModel, Reason: "test"}}, map[string]providers.Client{providers.ProviderOpenAI: client}, emitter, false, nil, nil, false, providers.ProviderOpenAI, codexCoveredModel, nil).WithManagedSubscriptions(leaser)

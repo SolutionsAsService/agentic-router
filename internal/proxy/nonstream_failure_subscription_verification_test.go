@@ -40,7 +40,7 @@ func TestVerificationNonstreamFailedJSONCannotWin(t *testing.T) {
 				_, _ = io.WriteString(w, `{"id":"synthetic-failure","object":"response","status":"failed","error":{"code":"usage_limit_reached","message":"synthetic included exhaustion"},"output":[],"usage":{"input_tokens":11,"output_tokens":0}}`)
 			}))
 			defer upstream.Close()
-			client := &includedOnlySyntheticClient{Client: openai.NewClient("synthetic-api-key", upstream.URL)}
+			client := openai.NewClient("synthetic-api-key", upstream.URL)
 			client.SetCodexBaseURL(upstream.URL)
 			leaser := &scriptedSubscriptionLeaser{leases: []subscriptions.Lease{{AccountID: "first-account", OwnerID: "first-owner", Tier: auth.SubscriptionTierPersonal, AccessToken: "first-seat", ProviderAccount: "first-provider"}, {AccountID: "second-account", OwnerID: "second-owner", Tier: auth.SubscriptionTierShared, AccessToken: "second-seat"}}}
 			svc := NewService(staticRouter{decision: router.Decision{Provider: providers.ProviderOpenAI, Model: codexCoveredModel, Reason: "test"}}, map[string]providers.Client{providers.ProviderOpenAI: client}, nil, false, nil, nil, false, providers.ProviderOpenAI, codexCoveredModel, nil).WithManagedSubscriptions(leaser).WithDeploymentKeyedProviders(map[string]struct{}{providers.ProviderOpenAI: {}})

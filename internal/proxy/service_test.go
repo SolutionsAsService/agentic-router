@@ -75,8 +75,7 @@ type fakeProvider struct {
 	proxyErrByEndpoint map[providers.Endpoint]error
 }
 
-// Synthetic provider never bills subscription extra usage.
-func (*fakeProvider) IncludedOnlySubscriptions() bool { return true }
+func (*fakeProvider) SupportsSubscriptions() bool { return true }
 
 func (f *fakeProvider) Proxy(ctx context.Context, decision router.Decision, prep providers.PreparedRequest, w http.ResponseWriter, r *http.Request) error {
 	saved := make([]byte, len(prep.Body))

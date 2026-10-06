@@ -697,7 +697,7 @@ type swapErrProvider struct {
 	calls         int
 }
 
-func (*swapErrProvider) IncludedOnlySubscriptions() bool { return true }
+func (*swapErrProvider) SupportsSubscriptions() bool { return true }
 
 func (s *swapErrProvider) Proxy(ctx context.Context, decision router.Decision, prep providers.PreparedRequest, w http.ResponseWriter, r *http.Request) error {
 	s.calls++

@@ -21,14 +21,23 @@ retains its existing subscription exclusion. After eligible included capacity is
 exhausted, authorized API capacity serves the originally selected model. Committed
 streams are never replayed, and terminal upstream failures are accounted as errors.
 
-A subscription transport must prove provider-enforced included-only dispatch.
-Neither production OpenAI Codex nor Anthropic OAuth adapter currently establishes
-that guarantee: both providers can enable paid extra usage. Therefore those
-adapters are excluded before subscription dispatch, including direct tokens,
-bypasses and last-resort paths. Quota snapshots cannot substitute for enforcement.
-Authorized API fallback remains available. Synthetic transports can declare the
-capability only when their provider enforces it. Production subscription utilization
-cannot approach the target until an enforceable included-only protocol is available.
+Native OpenAI Codex and Anthropic adapters accept subscription OAuth credentials.
+Anthropic-compatible bearer gateways do not advertise native Claude subscription
+support.
+An adapter's subscription capability describes transport support, not a guarantee
+that the provider cannot charge extra usage. Healthy accounts and accounts with
+no quota observation may serve; known exhausted or paid-overage accounts are
+excluded, and quota failures rotate to another eligible account or authorized API
+capacity. Depleted Weave credits prohibit paid API fallback, not subscription use.
+
+Providers control extra usage through account settings and credits. Quota headers
+are observations, not an atomic included-only reservation: an unknown account or
+an in-flight request can cross into provider-enabled extra usage before the router
+observes it. Disable extra usage at the provider to require a strict no-extra-usage
+boundary. The router neither enables extra usage nor uses known overage as a
+last-resort account, and observed paid overage is excluded from included-capacity
+billing and coverage. Replay tests exercise real adapters against synthetic HTTP
+upstreams without replacing their subscription capability.
 
 Migration 0121 preserves historical registration through the enrolling key,
 including soft-deleted keys. Duplicate provider/external-account identities are
@@ -59,7 +68,7 @@ verified reconnect updates that owner's legacy row, retaining its ID and workspa
 binding, and leaves other owners' rows untouched. An unresolved row cannot be
 restored with Enable. Unassigned rows require administrator assignment before
 reconnect; assignment alone does not enable them. Reconnect restores registration,
-but the included-only transport gate described above still applies to serving.
+but quota, cooldown, and model eligibility checks still apply to serving.
 OAuth exchange can rotate the refresh token even if persistence fails; repeat a
 fresh provider login after a failed enrollment rather than reusing an old token.
 

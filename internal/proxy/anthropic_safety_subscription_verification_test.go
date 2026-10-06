@@ -11,22 +11,23 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"weave-os/router/internal/billing"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/providers/anthropic"
 	"weave-os/router/internal/router"
 )
 
-func TestVerificationUnprovenAnthropicExtraUsageNeverDispatched(t *testing.T) {
+func TestVerificationNativeAnthropicSubscriptionPreferredToPaidAPI(t *testing.T) {
 	for _, withAPI := range []bool{true, false} {
 		t.Run(map[bool]string{true: "authorized-api", false: "no-api"}[withAPI], func(t *testing.T) {
-			var oauthCharges, apiRequests int
+			var subscriptionRequests, apiRequests int
 			var winningPayload []byte
 			var capturesMu sync.Mutex
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				capturesMu.Lock()
 				defer capturesMu.Unlock()
-				if r.Header.Get("Authorization") != "" {
-					oauthCharges++
+				if r.Header.Get("Authorization") == "Bearer sk-ant-oat01-synthetic-subscription-token" {
+					subscriptionRequests++
 				} else if r.Header.Get("X-Api-Key") == "synthetic-api-key" {
 					apiRequests++
 				} else {
@@ -46,31 +47,27 @@ func TestVerificationUnprovenAnthropicExtraUsageNeverDispatched(t *testing.T) {
 			}
 			client := anthropic.NewClient(apiKey, server.URL)
 			svc := NewService(staticRouter{decision: router.Decision{Provider: providers.ProviderAnthropic, Model: "claude-opus-4-8", Reason: "test"}}, map[string]providers.Client{providers.ProviderAnthropic: client}, nil, false, nil, nil, false, providers.ProviderAnthropic, "claude-opus-4-8", nil).WithDeploymentKeyedProviders(keyed)
-			ctx := context.WithValue(context.Background(), AnthropicSubscriptionContextKey{}, "sk-ant-oat01-synthetic-unsafe-token")
+			ctx := context.WithValue(context.Background(), AnthropicSubscriptionContextKey{}, "sk-ant-oat01-synthetic-subscription-token")
 			ctx = WithManagedSubscriptionUsage(ctx)
+			ctx = billing.WithSubscriptionOnly(ctx, billing.SubscriptionOnlyCreditsDepleted)
 			body := `{"model":"auto","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"synthetic billing"}],"tools":[{"name":"read_file","input_schema":{"type":"object"}}]}`
 			rec := httptest.NewRecorder()
 			err := svc.ProxyMessages(ctx, []byte(body), rec, httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body)))
-			require.Zero(t, oauthCharges, "provider charges first unsafe OAuth request; prevention must precede dispatch")
-			if withAPI {
-				require.NoError(t, err)
-				require.Equal(t, 1, apiRequests)
-				require.Contains(t, rec.Body.String(), "authorized Anthropic answer")
-				require.Equal(t, "read_file", gjson.GetBytes(winningPayload, "tools.0.name").String())
-				require.False(t, servedOnSubscription(ctx))
-			} else {
-				require.Error(t, err)
-				require.Zero(t, apiRequests)
-			}
+			require.Equal(t, 1, subscriptionRequests)
+			require.NoError(t, err)
+			require.Zero(t, apiRequests)
+			require.Contains(t, rec.Body.String(), "authorized Anthropic answer")
+			require.Equal(t, "read_file", gjson.GetBytes(winningPayload, "tools.0.name").String())
+			require.True(t, servedOnSubscription(ctx))
 		})
 	}
 }
 
 func TestVerificationSuppressedInboundAnthropicOAuthNeverRelayed(t *testing.T) {
-	var oauthCharges atomic.Int32
+	var subscriptionRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Authorization"), "sk-ant-oat") {
-			oauthCharges.Add(1)
+			subscriptionRequests.Add(1)
 		}
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -82,9 +79,9 @@ func TestVerificationSuppressedInboundAnthropicOAuthNeverRelayed(t *testing.T) {
 	request := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer sk-ant-oat01-synthetic-inbound-token")
 	_ = svc.ProxyMessages(ctx, []byte(body), httptest.NewRecorder(), request)
-	require.Zero(t, oauthCharges.Load(), "a suppressed inbound subscription bearer must not be relayed by inference dispatch")
+	require.Zero(t, subscriptionRequests.Load(), "a suppressed inbound subscription bearer must not be relayed by inference dispatch")
 	passthroughRequest := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
 	passthroughRequest.Header.Set("Authorization", "Bearer sk-ant-oat01-synthetic-inbound-token")
 	require.Error(t, svc.PassthroughToNamedProvider(ctx, providers.ProviderAnthropic, []byte(body), httptest.NewRecorder(), passthroughRequest))
-	require.Zero(t, oauthCharges.Load(), "a suppressed inbound subscription bearer must not be relayed by the adapter passthrough tier")
+	require.Zero(t, subscriptionRequests.Load(), "a suppressed inbound subscription bearer must not be relayed by the adapter passthrough tier")
 }

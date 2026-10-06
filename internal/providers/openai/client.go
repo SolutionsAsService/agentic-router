@@ -173,6 +173,9 @@ func NewClientWithStallTimeouts(apiKey, baseURL string, headerTimeout, sseIdleTi
 	return c
 }
 
+// SupportsSubscriptions reports support for the native Codex OAuth transport.
+func (c *Client) SupportsSubscriptions() bool { return true }
+
 // DeploymentPrincipal fingerprints the account this client's own key
 // authenticates as; see providers.DeploymentPrincipal.
 func (c *Client) DeploymentPrincipal() string {

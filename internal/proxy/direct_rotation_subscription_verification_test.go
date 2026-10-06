@@ -13,16 +13,14 @@ import (
 	"weave-os/router/internal/router"
 )
 
-// No prior quota snapshot can establish a provider-enforced no-overage mode.
-// The fixture charges the first OAuth request: inspecting its response headers
-// afterwards is too late. Authorized API capacity remains available.
-func TestVerificationUnprovenCodexExtraUsageNeverDispatched(t *testing.T) {
-	var oauthCharges, apiRequests int
+// A healthy subscription must not be displaced by an available paid API key.
+func TestVerificationNativeCodexSubscriptionPreferredToPaidAPI(t *testing.T) {
+	var subscriptionRequests, apiRequests int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "Bearer synthetic-api-key" {
 			apiRequests++
-		} else {
-			oauthCharges++
+		} else if r.Header.Get("Authorization") == "Bearer "+codexTestToken {
+			subscriptionRequests++
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"authorized answer\"}\n\n")
@@ -36,7 +34,7 @@ func TestVerificationUnprovenCodexExtraUsageNeverDispatched(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	err := svc.ProxyOpenAIChatCompletion(codexSubscriptionTestCtx(), body, recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body))))
 	require.NoError(t, err)
-	require.Zero(t, oauthCharges, "unproven included-only OAuth must be excluded before its first charge")
-	require.Equal(t, 1, apiRequests)
+	require.Equal(t, 1, subscriptionRequests)
+	require.Zero(t, apiRequests)
 	require.Contains(t, recorder.Body.String(), "authorized answer")
 }

@@ -34,7 +34,7 @@ type fakeOutcome struct {
 	err        error  // nil = success
 }
 
-func (f *fakeClient) IncludedOnlySubscriptions() bool { return true }
+func (f *fakeClient) SupportsSubscriptions() bool { return true }
 
 func (f *fakeClient) Proxy(ctx context.Context, _ router.Decision, _ providers.PreparedRequest, w http.ResponseWriter, _ *http.Request) error {
 	idx := f.calls

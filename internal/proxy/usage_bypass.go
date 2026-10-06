@@ -95,7 +95,7 @@ func (s *Service) subscriptionPassthroughEngaged(ctx context.Context, headers ht
 // scorer, which already handles the paid-key fallback and subscription-only
 // refusal for that state.
 func (s *Service) classifierPassthroughEngaged(ctx context.Context, headers http.Header, req router.Request, turnType turntype.TurnType) (string, bool) {
-	if !s.includedOnlySubscriptionTransport(providers.ProviderAnthropic) {
+	if !s.supportsSubscriptionTransport(providers.ProviderAnthropic) {
 		return "", false
 	}
 	if turnType != turntype.Classifier {
@@ -135,7 +135,7 @@ func (s *Service) classifierPassthroughEngaged(ctx context.Context, headers http
 // normal routing path (routing and subscription account selection) takes over,
 // so the caller starts conserving their remaining quota.
 func (s *Service) usageBypassEngaged(ctx context.Context, headers http.Header, req router.Request) (string, bool) {
-	if !s.includedOnlySubscriptionTransport(providers.ProviderAnthropic) && !s.includedOnlySubscriptionTransport(providers.ProviderOpenAI) {
+	if !s.supportsSubscriptionTransport(providers.ProviderAnthropic) && !s.supportsSubscriptionTransport(providers.ProviderOpenAI) {
 		return "", false
 	}
 	cfg, ok := usageBypassFromContext(ctx)
@@ -143,7 +143,7 @@ func (s *Service) usageBypassEngaged(ctx context.Context, headers http.Header, r
 		return "", false
 	}
 	provider, token, covered := subscriptionCoveredTarget(ctx, headers, req)
-	if !covered || !s.includedOnlySubscriptionTransport(provider) {
+	if !covered || !s.supportsSubscriptionTransport(provider) {
 		return "", false
 	}
 	if provider == providers.ProviderAnthropic && s.subscriptionModels.denied([]byte(token), req.RequestedModel, s.clockNow()) {

@@ -145,6 +145,9 @@ type Client struct {
 	versionMemo providers.GatewayVersionMemo
 }
 
+// SupportsSubscriptions excludes bearer gateways from native Claude OAuth.
+func (c *Client) SupportsSubscriptions() bool { return c.authScheme == AuthAPIKeyHeader }
+
 func NewClient(apiKey, baseURL string, opts ...Option) *Client {
 	c := &Client{
 		apiKey:          apiKey,
@@ -241,7 +244,7 @@ const oauthBetaToken = "oauth-2025-04-20"
 // sk-ant-oat01…) used to gate the oauth beta header on the pure-passthrough path.
 const subscriptionTokenPrefix = "sk-ant-oat"
 
-var errInboundSubscriptionRelay = errors.New("refusing to relay inbound Claude subscription bearer without included-only enforcement")
+var errInboundSubscriptionRelay = errors.New("refusing to relay inbound Claude subscription bearer without resolved credentials")
 
 // setAuth resolves credentials in precedence order: resolved per-request
 // credential (subscription/BYOK/client), deployment key, then client-sent auth
@@ -341,9 +344,8 @@ func (c *Client) Proxy(ctx context.Context, decision router.Decision, prep provi
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
-	// This adapter cannot enforce included-only subscription billing, so an
-	// inference call never relays an inbound Claude subscription bearer that
-	// proxy credential resolution suppressed or did not resolve.
+	// Suppression must survive the adapter boundary: falling back to inbound
+	// auth here would resurrect a disabled or known exhausted subscription.
 	if requestcontext.CredentialsFromContext(ctx) == nil && c.authScheme != AuthBearer && c.subscriptionAuth(ctx, r) {
 		return errInboundSubscriptionRelay
 	}

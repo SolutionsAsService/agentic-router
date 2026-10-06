@@ -264,8 +264,7 @@ const (
 	leakHeader = "X-Weave-Test-Upstream-Envelope"
 )
 
-// Synthetic provider never bills subscription extra usage.
-func (*codexQuotaClient) IncludedOnlySubscriptions() bool { return true }
+func (*codexQuotaClient) SupportsSubscriptions() bool { return true }
 
 func (c *codexQuotaClient) Proxy(ctx context.Context, _ router.Decision, _ providers.PreparedRequest, _ http.ResponseWriter, _ *http.Request) error {
 	creds := CredentialsFromContext(ctx)

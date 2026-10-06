@@ -294,8 +294,7 @@ func TestManagedSubscriptionEnrollmentFailureDoesNotBlockUnrelatedProvider(t *te
 	require.Empty(t, leaser.providers)
 }
 
-// meteredOnlyClient hides the fake's included-only capability, matching real
-// provider adapters that cannot guarantee a subscription draws no paid usage.
+// meteredOnlyClient exposes only the API transport, without OAuth support.
 type meteredOnlyClient struct{ providers.Client }
 
 func TestManagedSubscriptionEnrollmentFailureSuppressesInboundOAuthForAPIFallback(t *testing.T) {

@@ -164,7 +164,7 @@ func (s *Service) dispatchPlanned(ctx context.Context, in failoverInputs, plan i
 					in.w.Header().Set(HeaderRouterFallbackAttempt, attemptIdxLabel(attempt.Index))
 				}
 			}
-			if current := CredentialsFromContext(attemptCtx); current != nil && current.OAuth && !s.includedOnlySubscriptionTransport(decision.Provider) {
+			if current := CredentialsFromContext(attemptCtx); current != nil && current.OAuth && !s.supportsSubscriptionTransport(decision.Provider) {
 				if subscriptionAttemptOnly(ctx) || paidFallbackForbidden(ctx) || !s.managedProviderFallbackAvailable(ctx, subscriptions.ProviderCodex) && decision.Provider == providers.ProviderOpenAI || !s.managedProviderFallbackAvailable(ctx, subscriptions.ProviderClaude) && decision.Provider == providers.ProviderAnthropic {
 					return dispatchAbort{err: ErrSubscriptionPoolUnavailable}
 				}

@@ -572,7 +572,7 @@ type parityUpstream struct {
 	servedModels   []string
 }
 
-func (*parityUpstream) IncludedOnlySubscriptions() bool { return true }
+func (*parityUpstream) SupportsSubscriptions() bool { return true }
 
 func (p *parityUpstream) Proxy(ctx context.Context, decision router.Decision, _ providers.PreparedRequest, w http.ResponseWriter, _ *http.Request) error {
 	p.servedModels = append(p.servedModels, decision.Model)

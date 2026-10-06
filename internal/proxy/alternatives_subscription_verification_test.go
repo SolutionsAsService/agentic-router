@@ -63,7 +63,7 @@ func TestVerificationAutomaticAlternativeHTTP(t *testing.T) {
 				_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}\n\n")
 			}))
 			defer server.Close()
-			client := &includedOnlySyntheticClient{Client: openai.NewClient("synthetic-api-key", server.URL)}
+			client := openai.NewClient("synthetic-api-key", server.URL)
 			client.SetCodexBaseURL(server.URL)
 			resolverRequest := router.Request{HasTools: true}
 			if scenario.excluded {
@@ -128,7 +128,7 @@ func TestVerificationAutomaticAlternativeHTTP(t *testing.T) {
 }
 
 func TestVerificationAlternativesHonorHardRequestExclusions(t *testing.T) {
-	client := &includedOnlySyntheticClient{Client: openai.NewClient("synthetic-api-key", "http://127.0.0.1:1")}
+	client := openai.NewClient("synthetic-api-key", "http://127.0.0.1:1")
 	svc := NewService(staticRouter{}, map[string]providers.Client{providers.ProviderOpenAI: client}, nil, false, nil, nil, false, providers.ProviderOpenAI, codexCoveredModel, nil)
 	ctx := managedSubscriptionContext(auth.SubscriptionProviderCodex)
 	selected := router.Decision{Provider: providers.ProviderOpenAI, Model: codexCoveredModel, Metadata: &router.RoutingMetadata{CandidateModels: []string{codexCoveredModel, "gpt-6-sol", "gpt-6.1-sol"}}}
