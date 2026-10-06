@@ -101,7 +101,7 @@ uv run --locked --extra qwen python server.py
 CUDA kernels; otherwise Qwen's rotary embedding JIT-compiles a Triton override on
 first use, which fails without a C compiler and adds compile latency to requests.
 Startup verifies the release, loads the model, then runs a priming pass and a
-verification pass over short and long synthetic inputs. The port opens only after
+verification pass over short and long synthetic inputs, alone and batched. The port opens only after
 every verification output is valid, so a TCP startup probe succeeds only after
 warmup; there is no separate ongoing readiness endpoint. Any warmup error exits the
 process instead of serving a cold or broken model.
@@ -111,10 +111,23 @@ Alternatively build the included Dockerfile from the repository root. Serve port
 origins only, and refuses redirects. Restrict network access to router workers.
 Disable request-body capture at the ingress: task text is sensitive. The service
 does not emit access logs and error responses omit prompts and model output.
-It has one concurrent inference slot, rejects excess requests with 503, caps input
-at 32,768 UTF-8 bytes / 8,192 templated tokens, and generates at most 16 new tokens
-greedily with thinking disabled. The generation time bound is best-effort between
-GPU steps; the Go deadline is authoritative and late work cannot alter a decision.
+One GPU worker batches queued requests: each `generate` call takes the oldest
+request plus later ones while the batch stays within 8 requests and 8,192 padded
+tokens (longest input x batch size), so a maximum-size input runs alone. Inputs are
+left-padded. Up to 32 requests may wait; beyond that the service returns 503
+`classifier busy`. The Go client sends its remaining budget in
+`X-Task-Domain-Budget-Ms` (1-10,000; callers without it get 2.9s). Batch duration
+is estimated from padded tokens with a least-squares fit, seeded by the warmup
+verification pass and updated from recent batches on the serving GPU. A request
+joins a batch only if that estimate fits every member's remaining budget; one that
+cannot finish even alone, or whose caller disconnected, is dropped before inference
+(503 `classification deadline exceeded`). Input is capped
+at 32,768 UTF-8 bytes / 8,192 templated tokens, and at most 16 new tokens are
+generated greedily with thinking disabled. The generation time bound is best-effort
+between GPU steps; the Go deadline is authoritative and late work cannot alter a
+decision. Any rejection is stored as that task's terminal outcome, like other
+service failures, so size replicas for first-turn arrivals rather than relying on
+retries.
 
 ## Managed worker binding and admission
 

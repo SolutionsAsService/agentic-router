@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"weave-os/router/internal/router/taskdomain"
 )
@@ -58,6 +60,9 @@ func (c *TaskDomainClassifier) Classify(ctx context.Context, userText string) (t
 	}
 	request.Header.Set("Authorization", "Bearer "+c.bearer)
 	request.Header.Set("Content-Type", "application/json")
+	if deadline, ok := ctx.Deadline(); ok {
+		request.Header.Set(taskdomain.BudgetHeader, strconv.FormatInt(min(max(1, time.Until(deadline).Milliseconds()), taskdomain.MaxBudgetMilliseconds), 10))
+	}
 	response, err := c.client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("task classifier transport: %w", err)

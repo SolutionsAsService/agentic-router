@@ -17,6 +17,8 @@ SYSTEM_PROMPT: Final = (
 )
 MAX_INPUT_BYTES: Final = 32_768
 MAX_INPUT_TOKENS: Final = 8_192
+BUDGET_HEADER: Final = "X-Task-Domain-Budget-Ms"
+MAX_BUDGET_MILLISECONDS: Final = 10_000
 OUTPUT: Final = re.compile(r"[01](?:,[01]){4}")
 DIGEST: Final = re.compile(r"[a-f0-9]{64}")
 REQUIRED_FILES: Final = frozenset({
