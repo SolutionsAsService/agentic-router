@@ -42,3 +42,17 @@ func TestNativeServerToolsRecognizeHostedToolsBySourceShape(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []NativeServerTool{{Name: "googleSearch", Type: "googleSearch"}}, gemini.NativeServerTools())
 }
+
+func TestAdvisorToolModel(t *testing.T) {
+	withAdvisor, err := ParseAnthropic([]byte(`{"tools":[{"name":"Bash","input_schema":{"type":"object"}},{"type":"advisor_20260301","name":"advisor","model":"claude-opus-5-5"}]}`))
+	require.NoError(t, err)
+	assert.Equal(t, "claude-opus-5-5", withAdvisor.AdvisorToolModel())
+
+	withoutAdvisor, err := ParseAnthropic([]byte(`{"tools":[{"name":"advisor","input_schema":{"type":"object"}}]}`))
+	require.NoError(t, err)
+	assert.Empty(t, withoutAdvisor.AdvisorToolModel())
+
+	openAI, err := ParseOpenAI([]byte(`{"tools":[{"type":"advisor_20260301","model":"claude-opus-5-5"}]}`))
+	require.NoError(t, err)
+	assert.Empty(t, openAI.AdvisorToolModel())
+}

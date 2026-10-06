@@ -1442,6 +1442,15 @@ func (s *Service) runTurnLoop(
 		}
 	}
 
+	if pinFound && advisorRejectsModel(env, pin.Model) {
+		log.Info("Session pin dropped: the request's advisor tool cannot advise the pinned model",
+			"pin_model", pin.Model,
+			"advisor_model", env.AdvisorToolModel(),
+		)
+		pinFound = false
+		pin = sessionpin.Pin{}
+	}
+
 	// If the pre-filter excluded the pinned model for context overflow,
 	// re-verify with a direct fit-check before evicting the pin. Must reuse
 	// the pre-filter's estimate (ContextOverflowTokenEstimate, ÷4) rather than

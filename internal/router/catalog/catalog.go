@@ -217,6 +217,10 @@ type Model struct {
 	// instead of reasoning_content; the Anthropic translator reroutes a
 	// leading <think> block into Anthropic thinking. Default false.
 	ThinkTagReasoning bool
+	// AdvisorRank orders Claude models for Anthropic's advisor tool, which
+	// rejects an advisor ranked below the request model. Values mirror Claude
+	// Code's model catalog; 0 means the model takes no advisor.
+	AdvisorRank int
 	// CodexSubscriptionFallback explicitly permits trying a Codex subscription
 	// for this model outside the native Codex automatic roster. Unsupported
 	// targets must fall back to the selected model's API credential.
@@ -251,7 +255,7 @@ var Models = []Model{
 	//
 	// $1/$5 per the published table (the $0.80/$4 rate that used to sit here
 	// is Haiku 3.5's row — Haiku 4.5 never shipped at that price).
-	{ID: "claude-haiku-4-5", Source: SourceClosedSource, Tier: TierLow, ContextWindow: 200_000, Providers: []ProviderBinding{
+	{ID: "claude-haiku-4-5", Source: SourceClosedSource, Tier: TierLow, AdvisorRank: 1, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 1.00, OutputUSDPer1M: 5.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 1.00, OutputUSDPer1M: 5.00}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 1.00, OutputUSDPer1M: 5.00}},
@@ -261,7 +265,7 @@ var Models = []Model{
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00}},
 	}},
-	{ID: "claude-sonnet-4-6", Source: SourceClosedSource, Tier: TierMid, ContextWindow: 200_000, Providers: []ProviderBinding{
+	{ID: "claude-sonnet-4-6", Source: SourceClosedSource, Tier: TierMid, AdvisorRank: 2, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00}},
@@ -269,14 +273,14 @@ var Models = []Model{
 	// 1M context is behind the context-1m beta (catalog carries 200K like the
 	// rest of Sonnet). Priced at standard $3/$15, not the $2/$10 introductory
 	// rate (through 2026-08-31) — avoids a compile-time price going stale.
-	{ID: "claude-sonnet-5", Source: SourceClosedSource, Tier: TierMid, ContextWindow: 200_000, Providers: []ProviderBinding{
+	{ID: "claude-sonnet-5", Source: SourceClosedSource, Tier: TierMid, AdvisorRank: 4, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 3.00, OutputUSDPer1M: 15.00, CacheReadMultiplier: 0.10}},
 	}},
 	// Sonnet 5.5: $2/$10, cache reads at $0.20/MTok (0.1x), no fast tier.
 	// Native 1M context; thinking cannot be disabled (between_tools is the
 	// floor) and forced tool_choice is rejected, like Opus 5.5.
-	{ID: "claude-sonnet-5-5", Source: SourceClosedSource, Tier: TierMid, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+	{ID: "claude-sonnet-5-5", Source: SourceClosedSource, Tier: TierMid, AdvisorRank: 6, ContextWindow: 1_000_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 2.00, OutputUSDPer1M: 10.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 2.00, OutputUSDPer1M: 10.00, CacheReadMultiplier: 0.10}},
 	}},
@@ -300,23 +304,23 @@ var Models = []Model{
 	// 4.6+/4.7+/4.8 support 1M context via the context-1m-2025-08-07 beta; the
 	// catalog reports 200K and the pre-filter expands to 1M when the beta
 	// header is present (contextWindowForRequest in proxy/service.go).
-	{ID: "claude-opus-4-6", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 200_000, Providers: []ProviderBinding{
+	{ID: "claude-opus-4-6", Source: SourceClosedSource, Tier: TierHigh, AdvisorRank: 3, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00}},
 	}},
-	{ID: "claude-opus-4-7", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 200_000, Providers: []ProviderBinding{
+	{ID: "claude-opus-4-7", Source: SourceClosedSource, Tier: TierHigh, AdvisorRank: 5, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00}},
 	}},
 	// Opus 4.8 retired from routing; kept as priced passthrough so lingering BYOK/direct pins bill at real cost.
-	{ID: "claude-opus-4-8", Source: SourceClosedSource, ContextWindow: 200_000, Providers: []ProviderBinding{
+	{ID: "claude-opus-4-8", Source: SourceClosedSource, AdvisorRank: 5, ContextWindow: 200_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00, CacheReadMultiplier: 0.10}, FastPrice: Pricing{InputUSDPer1M: 10.00, OutputUSDPer1M: 50.00}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00, CacheReadMultiplier: 0.10}},
 	}},
 	// 1M context natively (no context-1m beta header), same $5/$25 as opus-4-8.
-	{ID: "claude-opus-5", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+	{ID: "claude-opus-5", Source: SourceClosedSource, Tier: TierHigh, AdvisorRank: 7, ContextWindow: 1_000_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00, CacheReadMultiplier: 0.10}, FastPrice: Pricing{InputUSDPer1M: 10.00, OutputUSDPer1M: 50.00}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00, CacheReadMultiplier: 0.10}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 5.00, OutputUSDPer1M: 25.00}},
@@ -325,7 +329,7 @@ var Models = []Model{
 	// Native 1M context, adaptive thinking always on, forced tool_choice
 	// rejected like Fable 5.1. Not a cluster roster member until it has
 	// quality labels.
-	{ID: "claude-opus-5-5", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+	{ID: "claude-opus-5-5", Source: SourceClosedSource, Tier: TierHigh, AdvisorRank: 7, ContextWindow: 1_000_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 4.00, OutputUSDPer1M: 20.00, CacheReadMultiplier: 0.05}, FastPrice: Pricing{InputUSDPer1M: 8.00, OutputUSDPer1M: 40.00}},
 		{Provider: providers.ProviderAnthropicGateway, Price: Pricing{InputUSDPer1M: 4.00, OutputUSDPer1M: 20.00, CacheReadMultiplier: 0.05}},
 		{Provider: providers.ProviderOpenAIGateway, Price: Pricing{InputUSDPer1M: 4.00, OutputUSDPer1M: 20.00}},
@@ -334,13 +338,13 @@ var Models = []Model{
 	// BYOK/direct pins and the compaction summarizer bill at real cost.
 	// Safety classifiers can return stop_reason "refusal" (HTTP 200); see
 	// mapStopReason in translate.
-	{ID: "claude-fable-5", Source: SourceClosedSource, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+	{ID: "claude-fable-5", Source: SourceClosedSource, AdvisorRank: 8, ContextWindow: 1_000_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 10.00, OutputUSDPer1M: 50.00, CacheReadMultiplier: 0.10}},
 	}},
 	// Fable 5.1: same $10/$50 as Fable 5, cache reads at $0.25/MTok (0.025x).
 	// Native 1M context, adaptive thinking always on, stop_reason "refusal"
 	// like Fable 5. Not a cluster roster member until it has quality labels.
-	{ID: "claude-fable-5-1", Source: SourceClosedSource, Tier: TierHigh, ContextWindow: 1_000_000, Providers: []ProviderBinding{
+	{ID: "claude-fable-5-1", Source: SourceClosedSource, Tier: TierHigh, AdvisorRank: 9, ContextWindow: 1_000_000, Providers: []ProviderBinding{
 		{Provider: providers.ProviderAnthropic, Price: Pricing{InputUSDPer1M: 10.00, OutputUSDPer1M: 50.00, CacheReadMultiplier: 0.025}},
 	}},
 

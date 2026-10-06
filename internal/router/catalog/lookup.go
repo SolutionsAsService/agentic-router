@@ -255,6 +255,13 @@ func TierFor(id string) Tier {
 	return m.Tier
 }
 
+// AdvisorRankFor returns the model's advisor-tool rank; ok is false for
+// models that take no advisor.
+func AdvisorRankFor(id string) (rank int, ok bool) {
+	m, found := ByID(id)
+	return m.AdvisorRank, found && m.AdvisorRank > 0
+}
+
 // ThinkTagReasoningFor reports whether the model streams chain-of-thought as
 // inline <think>…</think> in content (the Anthropic translator reroutes it
 // into thinking). Unknown models return false.

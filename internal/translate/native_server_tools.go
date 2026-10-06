@@ -9,6 +9,8 @@ import (
 
 var anthropicServerToolType = regexp.MustCompile(`^(web_search|web_fetch|code_execution)_\d{8}$`)
 
+var anthropicAdvisorToolType = regexp.MustCompile(`^advisor_\d{8}$`)
+
 var openAIServerToolTypes = map[string]struct{}{
 	"web_search":           {},
 	"web_search_preview":   {},
@@ -29,6 +31,23 @@ func (e *RequestEnvelope) NativeServerTools() []NativeServerTool {
 		return nil
 	}
 	return nativeServerToolsFromBody(e.body, e.format)
+}
+
+// AdvisorToolModel returns the advisor model declared by an Anthropic
+// advisor_* server tool, or "" when the request carries none.
+func (e *RequestEnvelope) AdvisorToolModel() string {
+	if e.format != FormatAnthropic {
+		return ""
+	}
+	model := ""
+	gjson.GetBytes(e.body, "tools").ForEach(func(_, tool gjson.Result) bool {
+		if anthropicAdvisorToolType.MatchString(strings.TrimSpace(tool.Get("type").String())) {
+			model = strings.TrimSpace(tool.Get("model").String())
+			return false
+		}
+		return true
+	})
+	return model
 }
 
 func nativeServerToolsFromBody(body []byte, format Format) []NativeServerTool {

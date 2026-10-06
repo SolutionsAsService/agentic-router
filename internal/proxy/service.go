@@ -1047,7 +1047,7 @@ func routingKnobsForRequest(ctx context.Context) *router.Overrides {
 }
 
 // safetyExcludedModels returns the hard request-time safety exclusion set
-// (context-overflow + gemini-unsigned-history). It re-runs both filters
+// (context-overflow + gemini-unsigned-history + advisor pairing). It re-runs the filters
 // against an EMPTY base — the routing-path filters skip models already in
 // excluded_models, so a policy-excluded overflow model would be absent from
 // those lists yet must still block bypass (it would 400 on the subscription).
@@ -1055,15 +1055,15 @@ func routingKnobsForRequest(ctx context.Context) *router.Overrides {
 func (s *Service) safetyExcludedModels(env *translate.RequestEnvelope, outputReserve int, enabledProviders map[string]struct{}) map[string]struct{} {
 	_, overflowed := excludeContextOverflowModels(env.ContextOverflowTokenEstimate(), env.SignatureTokenSavings(), outputReserve, enabledProviders, nil, s.availableModels)
 	_, geminiUnsigned := excludeGemini3xOnUnsignedHistory(env, nil, s.availableModels)
-	if len(overflowed) == 0 && len(geminiUnsigned) == 0 {
+	_, advisorOutranking := excludeAdvisorOutrankingModels(env, nil, s.routableUniverse())
+	if len(overflowed) == 0 && len(geminiUnsigned) == 0 && len(advisorOutranking) == 0 {
 		return nil
 	}
-	out := make(map[string]struct{}, len(overflowed)+len(geminiUnsigned))
-	for _, m := range overflowed {
-		out[m] = struct{}{}
-	}
-	for _, m := range geminiUnsigned {
-		out[m] = struct{}{}
+	out := make(map[string]struct{}, len(overflowed)+len(geminiUnsigned)+len(advisorOutranking))
+	for _, models := range [][]string{overflowed, geminiUnsigned, advisorOutranking} {
+		for _, m := range models {
+			out[m] = struct{}{}
+		}
 	}
 	return out
 }
@@ -3711,6 +3711,14 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 			"excluded_models", strings.Join(geminiUnsigned, ","),
 		)
 	}
+	excluded, advisorOutranking := excludeAdvisorOutrankingModels(env, excluded, s.routableUniverse())
+	if len(advisorOutranking) > 0 {
+		log.Info("advisor pre-filter: excluded models the advisor tool cannot advise",
+			"advisor_model", env.AdvisorToolModel(),
+			"excluded_models", strings.Join(advisorOutranking, ","),
+		)
+	}
+	hardExcluded := append(append([]string(nil), geminiUnsigned...), advisorOutranking...)
 
 	routeStart := time.Now()
 	req := router.Request{
@@ -3739,8 +3747,8 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 		GatewayProviders:              s.gatewayProvidersForRequest(ctx),
 		ExcludedModels:                excluded,
 		AllowedModels:                 allowedModelsForRequest(ctx),
-		SafetyExcludedModels:          withoutModelsKeep(s.safetyExcludedModels(env, outputReserve, enabledProviders), overflowAdmitted, geminiUnsigned),
-		ContextWindowExcludedModels:   contextWindowOnlyExclusions(ctxOverflowed, overflowAdmitted, geminiUnsigned),
+		SafetyExcludedModels:          withoutModelsKeep(s.safetyExcludedModels(env, outputReserve, enabledProviders), overflowAdmitted, hardExcluded),
+		ContextWindowExcludedModels:   contextWindowOnlyExclusions(ctxOverflowed, overflowAdmitted, hardExcluded),
 		UnsignedHistoryExcludedModels: modelSet(geminiUnsigned),
 		OverflowAdmittedModels:        modelSet(overflowAdmitted),
 		PreferredModels:               s.preferredModelsForRequest(ctx),

@@ -135,6 +135,19 @@ func TestReadmitForcedModel_KeepsPolicyExclusion(t *testing.T) {
 	assert.Contains(t, got, testOpus)
 }
 
+func TestReadmitForcedModel_KeepsAdvisorPairingExclusion(t *testing.T) {
+	s := &Service{availableModels: map[string]struct{}{testSol: {}, "claude-fable-5-1": {}}}
+	ctx := ctxWithRequestSubset(context.Background(), testSol)
+	env, err := translate.ParseAnthropic([]byte(`{"model":"claude-opus-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"advisor_20260301","name":"advisor","model":"claude-opus-5"}]}`))
+	require.NoError(t, err)
+	req := router.Request{ExcludedModels: s.excludedModelsForRequest(ctx)}
+	require.Contains(t, req.ExcludedModels, "claude-fable-5-1")
+
+	pin := sessionpin.Pin{Model: "claude-fable-5-1", Provider: providers.ProviderAnthropic}
+	got := s.readmitForcedModel(ctx, req, env, translate.RoutingFeatures{MaxTokens: 16}, pin)
+	assert.Contains(t, got, "claude-fable-5-1", "an opus-5 advisor cannot advise fable-5.1")
+}
+
 func TestReadmitForcedModel_NoSubsetIsNoOp(t *testing.T) {
 	s := &Service{availableModels: map[string]struct{}{testSol: {}, testTerra: {}}}
 	req := router.Request{ExcludedModels: map[string]struct{}{testTerra: {}}}
