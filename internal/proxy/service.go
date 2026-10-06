@@ -3850,7 +3850,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 			hmmHistory := s.loadHMMHistory(ctx, sessionKey, role)
 			forceHistory := s.loadForceModelHistory(ctx, sessionKey, role)
 			routeRes.SessionKey = sessionKey
-			routeRes.PriorServedModel, routeRes.SessionEverSwitched = switchHistoryFromPins(pin, hmmHistory, forceHistory)
+			routeRes.applySwitchHistory(pin, hmmHistory, forceHistory)
 		}
 
 		routeRes.UsageBypass = false
@@ -5007,6 +5007,8 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 
 	in, out := extractor.Tokens()
 	cacheCreation, cacheRead := extractor.CacheTokens()
+	baselineWarmPrefill := routeRes.baselineWarmPrefillTokens(requestStart, cacheCreation, cacheRead, decision.Model, s.baselineFor(feats.Model), req.HistoryTruncated)
+	requestedInputCost := catalog.CounterfactualInputCost(in, cacheCreation, cacheRead, baselineWarmPrefill, reqPricing, decision.Provider)
 	if responseBuffer != nil && proxyErr == nil {
 		setRouterCostHeaders(w.Header(), routerResponseCostFromPricing(actPricing, decision.Provider, in, out, cacheCreation, cacheRead))
 	}
@@ -5033,7 +5035,8 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 		Int64("usage.output_tokens", int64(out)).
 		Int64("usage.cache_creation_input_tokens", int64(cacheCreation)).
 		Int64("usage.cache_read_input_tokens", int64(cacheRead)).
-		Float64("cost.requested_input_usd", catalog.EffectiveInputCost(in, cacheCreation, cacheRead, reqPricing, decision.Provider)).
+		Float64("cost.requested_input_usd", requestedInputCost).
+		Int64("cost.baseline_warm_prefill_tokens", int64(baselineWarmPrefill)).
 		Float64("cost.requested_output_usd", catalog.EffectiveOutputCost(in, out, reqPricing)).
 		Float64("cost.actual_input_usd", catalog.EffectiveInputCost(in, cacheCreation, cacheRead, actPricing, decision.Provider)).
 		Float64("cost.actual_output_usd", catalog.EffectiveOutputCost(in, out, actPricing)).
@@ -5124,7 +5127,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 			EmbedInput:               embedInput,
 			InputTokens:              int32(in),
 			OutputTokens:             int32(out),
-			RequestedInputCostUSD:    catalog.EffectiveInputCost(in, cacheCreation, cacheRead, reqPricing, decision.Provider),
+			RequestedInputCostUSD:    requestedInputCost,
 			RequestedOutputCostUSD:   catalog.EffectiveOutputCost(in, out, reqPricing),
 			ActualInputCostUSD:       catalog.EffectiveInputCost(in, cacheCreation, cacheRead, actPricing, decision.Provider),
 			ActualOutputCostUSD:      catalog.EffectiveOutputCost(in, out, actPricing),
@@ -7990,6 +7993,8 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 
 	in, out := extractor.Tokens()
 	cacheCreation, cacheRead := extractor.CacheTokens()
+	baselineWarmPrefill := routeRes.baselineWarmPrefillTokens(requestStart, cacheCreation, cacheRead, decision.Model, s.baselineFor(feats.Model), routeRequest.HistoryTruncated)
+	requestedInputCost := catalog.CounterfactualInputCost(in, cacheCreation, cacheRead, baselineWarmPrefill, reqPricing, decision.Provider)
 	if !env.Stream() && proxyErr == nil {
 		setRouterCostHeaders(w.Header(), routerResponseCostFromPricing(actPricing, decision.Provider, in, out, cacheCreation, cacheRead))
 	}
@@ -8027,7 +8032,8 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 		Int64("usage.output_tokens", int64(out)).
 		Int64("usage.cache_creation_input_tokens", int64(cacheCreation)).
 		Int64("usage.cache_read_input_tokens", int64(cacheRead)).
-		Float64("cost.requested_input_usd", catalog.EffectiveInputCost(in, cacheCreation, cacheRead, reqPricing, decision.Provider)).
+		Float64("cost.requested_input_usd", requestedInputCost).
+		Int64("cost.baseline_warm_prefill_tokens", int64(baselineWarmPrefill)).
 		Float64("cost.requested_output_usd", catalog.EffectiveOutputCost(in, out, reqPricing)).
 		Float64("cost.actual_input_usd", catalog.EffectiveInputCost(in, cacheCreation, cacheRead, actPricing, decision.Provider)).
 		Float64("cost.actual_output_usd", catalog.EffectiveOutputCost(in, out, actPricing)).
@@ -8146,7 +8152,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 			EmbedInput:               embedInput,
 			InputTokens:              int32(in),
 			OutputTokens:             int32(out),
-			RequestedInputCostUSD:    catalog.EffectiveInputCost(in, cacheCreation, cacheRead, reqPricing, decision.Provider),
+			RequestedInputCostUSD:    requestedInputCost,
 			RequestedOutputCostUSD:   catalog.EffectiveOutputCost(in, out, reqPricing),
 			ActualInputCostUSD:       catalog.EffectiveInputCost(in, cacheCreation, cacheRead, actPricing, decision.Provider),
 			ActualOutputCostUSD:      catalog.EffectiveOutputCost(in, out, actPricing),
