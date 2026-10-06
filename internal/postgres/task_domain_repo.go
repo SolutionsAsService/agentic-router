@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,6 +13,14 @@ import (
 	"weave-os/router/internal/router/taskdomain"
 	"weave-os/router/internal/sqlc"
 )
+
+// ErrTaskProfileCapacity reports that every inference transaction slot stayed busy for the
+// bounded wait; it is capacity pressure, not a classifier or request timeout.
+var ErrTaskProfileCapacity = errors.New("task profile transaction capacity reached")
+
+// slotWait bounds how long a first turn waits for an inference transaction slot, leaving
+// most of the request's taskdomain.Timeout for classification itself.
+const slotWait = time.Second
 
 // TaskDomainRepo bounds connections held by optional first-turn inference.
 type TaskDomainRepo struct {
@@ -46,8 +55,16 @@ func (r *TaskDomainRepo) Resolve(ctx context.Context, key taskdomain.Key, resume
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return taskdomain.Outcome{}, err
 	}
-	if !r.transactions.TryAcquire(1) {
-		return taskdomain.Outcome{}, errors.New("task profile transaction capacity reached")
+	// Wait briefly for a slot: one that frees moments later is used, but a long wait would
+	// leave classification too little budget and persist a timeout for this task.
+	slotCtx, cancelSlot := context.WithTimeout(ctx, slotWait)
+	err = r.transactions.Acquire(slotCtx, 1)
+	cancelSlot()
+	if err != nil {
+		if ctx.Err() != nil {
+			return taskdomain.Outcome{}, ctx.Err()
+		}
+		return taskdomain.Outcome{}, ErrTaskProfileCapacity
 	}
 	defer r.transactions.Release(1)
 	var outcome taskdomain.Outcome
@@ -73,7 +90,7 @@ func (r *TaskDomainRepo) Resolve(ctx context.Context, key taskdomain.Key, resume
 		if _, err := decodeTaskProfile(encoded, key); err != nil {
 			return err
 		}
-		return queries.UpdateTaskDomainProfile(ctx, sqlc.UpdateTaskDomainProfileParams{Outcome: encoded, ConversationKey: key.Conversation, RootSha256: key.Root, ReleaseSha256: key.Release, EvidenceSha256: key.Evidence})
+		return queries.UpdateTaskDomainProfile(ctx, sqlc.UpdateTaskDomainProfileParams{Outcome: encoded, Failed: outcome.Status != taskdomain.Ready, ConversationKey: key.Conversation, RootSha256: key.Root, ReleaseSha256: key.Release, EvidenceSha256: key.Evidence})
 	})
 	return outcome, err
 }
