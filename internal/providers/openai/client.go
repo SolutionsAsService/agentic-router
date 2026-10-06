@@ -304,6 +304,11 @@ func (c *Client) Proxy(ctx context.Context, decision router.Decision, prep provi
 	}
 	// Applied after the catalog map so a BYOK endpoint's own naming wins.
 	reqBody = requestcontext.ApplyModelAlias(ctx, reqBody, decision.Model)
+	if useCodex {
+		if err := c.checkCodexIncludedQuota(ctx, gjson.GetBytes(reqBody, "model").String()); err != nil {
+			return err
+		}
+	}
 	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("build upstream request: %w", err)
