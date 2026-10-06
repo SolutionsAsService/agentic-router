@@ -515,7 +515,9 @@ func (r turnLoopResult) rescueOrigin() policy.OverrideSource {
 }
 
 // isHardPinnedTurn reports whether a turn type bypasses pin lookup/write,
-// planner, and scorer entirely via the boot-time hard pin. These turns are
+// planner, and scorer entirely. Probes preserve the requested target unless
+// explicitly deployment-pinned; title generation hard-pins only with an
+// explicit deployment override. These turns are
 // also skipped by proactive compaction: they are either tiny (probe/title-gen)
 // or carry their own dedicated flow (Claude Code's compaction turn, whose
 // request the router must not rewrite). SubAgentDispatch hard-pins when an
@@ -525,8 +527,10 @@ func (r turnLoopResult) rescueOrigin() policy.OverrideSource {
 // force them. Classifier turns are scored (see isUnpinnedScoredTurn).
 func (s *Service) isHardPinnedTurn(ctx context.Context, tt turntype.TurnType) bool {
 	switch tt {
-	case turntype.Compaction, turntype.Probe, turntype.TitleGen:
+	case turntype.Compaction, turntype.Probe:
 		return true
+	case turntype.TitleGen:
+		return s.explicitUtilityHardPin
 	case turntype.SubAgentDispatch:
 		if s.hasSubAgentOverride() {
 			return true
@@ -545,8 +549,10 @@ func (s *Service) isHardPinnedTurn(ctx context.Context, tt turntype.TurnType) bo
 // transcript it grades is the payload, not history the router may rewrite.
 // A recap is a side fork shown beneath the reply the user just read, so it
 // gets no routing marker, and its decision must not move the session pin.
+// A title is a separate hidden session; neither the conversation's model nor
+// a deployment's default utility shortcut is a request-aware title choice.
 func isUnpinnedScoredTurn(tt turntype.TurnType) bool {
-	return tt == turntype.Classifier || tt == turntype.Recap
+	return tt == turntype.Classifier || tt == turntype.Recap || tt == turntype.TitleGen
 }
 
 // routeWithoutPin scores a turn that has no session pin to honor or anchor:
@@ -832,8 +838,10 @@ func (s *Service) runTurnLoop(
 	// would otherwise short-circuit scoring (/force-model, sticky pins, usage
 	// bypass, blind-experiment passthrough, planner stays) is not consulted.
 	// Utility hard pins below are never policy-scored and keep their own path.
-	if _, pinned := router.HonouredPolicyPin(ctx); pinned && !s.isHardPinnedTurn(ctx, res.TurnType) {
-		if s.pinStore != nil && !isUnpinnedScoredTurn(res.TurnType) {
+	automaticProbe := res.TurnType == turntype.Probe && !s.explicitUtilityHardPin &&
+		(req.RequestedModel == "" || req.RequestedModel == automaticProbeModel)
+	if _, pinned := router.HonouredPolicyPin(ctx); pinned && (!s.isHardPinnedTurn(ctx, res.TurnType) || automaticProbe) {
+		if s.pinStore != nil && !isUnpinnedScoredTurn(res.TurnType) && !automaticProbe {
 			res.SessionKey = threadSessionKey
 			_, _, res.SessionFirstTurn = s.loadPinWithStoreState(ctx, res.SessionKey, res.PinRole)
 		}
@@ -882,7 +890,7 @@ func (s *Service) runTurnLoop(
 			return res, nil
 		}
 	}
-	if hardPinnedTurn {
+	if hardPinnedTurn && !automaticProbe {
 		purpose, registered := utilityPurposes[res.TurnType]
 		if !registered {
 			return res, fmt.Errorf("hard-pinned turn type %q has no inference purpose", res.TurnType)
@@ -891,6 +899,7 @@ func (s *Service) runTurnLoop(
 	}
 	if forceModelFound && hardPinnedTurn {
 		if forcedPinEligible(forceModelPin, req) {
+			res.Purpose = utilityPurposes[res.TurnType]
 			threadPin, hmmHistory, forceHistory := sessionpin.Pin{}, sessionpin.Pin{}, sessionpin.Pin{}
 			if s.pinStore != nil {
 				threadPin, _ = s.loadPin(ctx, threadSessionKey, res.PinRole)
@@ -921,6 +930,21 @@ func (s *Service) runTurnLoop(
 			"enabled_providers", sortedEnabledKeys(req.EnabledProviders),
 			"role", res.PinRole,
 		)
+	}
+
+	if res.TurnType == turntype.Probe && !s.explicitUtilityHardPin {
+		res.SessionKey = [sessionpin.SessionKeyLen]byte{}
+		if automaticProbe {
+			return s.routeWithoutPin(ctx, req, res, reqHeaders, forceModelFound, forceModelPin)
+		}
+		decision, err := s.callerModelPassthroughDecision(ctx, req)
+		if err != nil {
+			return res, err
+		}
+		res.Decision = decision
+		res.CallerModelPassthrough = true
+		res.Origin = policy.OverrideSourceRequest
+		return res, nil
 	}
 
 	// Automatic hard pins bypass pin lookup/write, planner, and scorer entirely.

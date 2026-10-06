@@ -127,7 +127,8 @@ type Service struct {
 	// Off by default. Kill switch: ROUTER_DEEPSEEK_ESCAPE_NORMALIZE.
 	escapeNormalize bool
 	// hardPinExplore gates the Explore sub-agent hard-pin.
-	hardPinExplore bool
+	hardPinExplore         bool
+	explicitUtilityHardPin bool
 	// hardPinProvider/hardPinModel route compaction (and, when hardPinExplore is
 	// on, Explore sub-agent turns). Derived at boot from the cheapest registered
 	// model; overridable via ROUTER_HARD_PIN_PROVIDER / ROUTER_HARD_PIN_MODEL.
@@ -683,7 +684,7 @@ func routingMarkerFor(res turnLoopResult) string {
 	if decision.Model == "" {
 		return ""
 	}
-	if res.SuggestionMode || res.CallerModelPassthrough {
+	if res.SuggestionMode || res.CallerModelPassthrough || isUnpinnedScoredTurn(res.TurnType) || res.TurnType == turntype.Probe {
 		return ""
 	}
 	// A dropped force-model pin contradicts an ack the user already saw, so it
@@ -700,9 +701,8 @@ func routingMarkerFor(res turnLoopResult) string {
 	}
 	// Hard pins (compaction / sub-agent) return before the pin is loaded, so
 	// PriorServedModel is always empty there — suppress explicitly rather than
-	// letting it read as a first turn. A classifier verdict is parsed by the
-	// harness, not read by the user, and a prefix would corrupt it.
-	if res.HardPinned || isUnpinnedScoredTurn(res.TurnType) {
+	// letting it read as a first turn.
+	if res.HardPinned {
 		return ""
 	}
 	// A shadow checkpoint is news even when ordinary routing keeps the same model.
@@ -835,7 +835,7 @@ const (
 // baseline model rather than the cost-routed OSS slug that went dark. Honors
 // suggestion mode like routingMarkerFor; the caller applies the opt-out header.
 func baselineRoutingMarkerFor(res turnLoopResult, baselineModel string) string {
-	if res.SuggestionMode || baselineModel == "" {
+	if res.SuggestionMode || isUnpinnedScoredTurn(res.TurnType) || res.TurnType == turntype.Probe || baselineModel == "" {
 		return ""
 	}
 	// A failover that lands back on the model already serving is a no-op repeat;
@@ -849,7 +849,7 @@ func baselineRoutingMarkerFor(res turnLoopResult, baselineModel string) string {
 // siblingRoutingMarkerFor renders the routing badge for an in-turn same-cluster
 // failover, naming the candidate that actually serves.
 func siblingRoutingMarkerFor(res turnLoopResult, siblingModel string) string {
-	if res.SuggestionMode || siblingModel == "" || baseModelOf(res.PriorServedModel) == siblingModel {
+	if res.SuggestionMode || isUnpinnedScoredTurn(res.TurnType) || res.TurnType == turntype.Probe || siblingModel == "" || baseModelOf(res.PriorServedModel) == siblingModel {
 		return ""
 	}
 	return "✦ **Weave Router** → " + siblingModel + " · " + markerReasonSibling + "\n\n"
@@ -858,7 +858,7 @@ func siblingRoutingMarkerFor(res turnLoopResult, siblingModel string) string {
 // cyberRefusalRoutingMarkerFor renders the routing badge for a turn re-served
 // after the picked model refused it.
 func cyberRefusalRoutingMarkerFor(res turnLoopResult, fallbackModel string) string {
-	if res.SuggestionMode || fallbackModel == "" || baseModelOf(res.PriorServedModel) == fallbackModel {
+	if res.SuggestionMode || isUnpinnedScoredTurn(res.TurnType) || res.TurnType == turntype.Probe || fallbackModel == "" || baseModelOf(res.PriorServedModel) == fallbackModel {
 		return ""
 	}
 	return "✦ **Weave Router** → " + fallbackModel + " · " + markerReasonCyberRefusal + "\n\n"
@@ -2281,6 +2281,13 @@ type HardPinRequest struct {
 // HardPinResolver picks the hard-pin tier's provider/model for one request.
 // ok=false signals no eligible provider.
 type HardPinResolver func(HardPinRequest) (provider, model string, ok bool)
+
+// WithExplicitUtilityHardPin keeps title and probe overrides opt-in; the
+// boot-time fallback model alone is not an operator choice.
+func (s *Service) WithExplicitUtilityHardPin(enabled bool) *Service {
+	s.explicitUtilityHardPin = enabled
+	return s
+}
 
 // WithHardPinResolver installs a per-request hard-pin resolver. nil
 // preserves the boot-time hardPin{Provider,Model} for every request.
