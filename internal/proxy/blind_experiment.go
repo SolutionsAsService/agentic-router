@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"weave-os/router/internal/auth"
+	"weave-os/router/internal/observability/otel"
 	"weave-os/router/internal/router"
 	"weave-os/router/internal/router/catalog"
 	"weave-os/router/internal/router/cluster"
@@ -43,6 +44,42 @@ func blindExperimentPassthroughActive(ctx context.Context) bool {
 
 func callerModelPassthroughActive(ctx context.Context) bool {
 	return auth.RoutingPassthroughFrom(ctx) || blindExperimentPassthroughActive(ctx)
+}
+
+type callerRoutingSource string
+
+const (
+	callerRoutingSourceDefault       callerRoutingSource = "default"
+	callerRoutingSourceRoutingPolicy callerRoutingSource = "routing_policy"
+	callerRoutingSourceExperiment    callerRoutingSource = "experiment"
+	callerRoutingSourceCohort        callerRoutingSource = "cohort"
+)
+
+// callerRoutingState mirrors withUserSettings precedence: an explicit routing
+// policy suppresses the blind experiment, which otherwise decides the arm.
+func callerRoutingState(ctx context.Context) (passthrough bool, source callerRoutingSource) {
+	mode := auth.RoutingPolicyFrom(ctx).Mode
+	if mode == auth.RoutingPolicyPassthrough || mode == auth.RoutingPolicyAssigned {
+		return auth.RoutingPassthroughFrom(ctx), callerRoutingSourceRoutingPolicy
+	}
+	state, active := auth.BlindExperimentFrom(ctx)
+	if !active {
+		return false, callerRoutingSourceDefault
+	}
+	source = callerRoutingSourceExperiment
+	if state.CohortExperimentID != "" {
+		source = callerRoutingSourceCohort
+	}
+	return state.Arm == auth.BlindExperimentArmPassthrough, source
+}
+
+// applyCallerRoutingAttrs records the caller's assigned state, not the turn's
+// outcome: hard pins and force-model still rewrite some experiment-passthrough
+// turns. Spans are internal, so this does not disclose the blind arm to clients.
+func applyCallerRoutingAttrs(ctx context.Context, b *otel.AttrBuilder) *otel.AttrBuilder {
+	passthrough, source := callerRoutingState(ctx)
+	return b.Bool("routing.caller_passthrough", passthrough).
+		String("routing.caller_routing_source", string(source))
 }
 
 // policyTrainingAllowedForRequest excludes passthrough outcomes because the

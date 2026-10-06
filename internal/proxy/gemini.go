@@ -260,6 +260,7 @@ func (s *Service) ProxyGeminiGenerateContent(ctx context.Context, body []byte, w
 	applySidecarAttrs(geminiDecisionBuilder, routeRes)
 	applyPlannerAttrs(geminiDecisionBuilder, routeRes)
 	applyRoutingStateAttrs(geminiDecisionBuilder, routeRes, decision.ServedIdentity(), sessionKey)
+	applyCallerRoutingAttrs(ctx, geminiDecisionBuilder)
 	otel.Record(ctx, otel.Span{
 		Name:  "router.decision",
 		Start: requestStart,

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"weave-os/router/internal/auth"
 	"weave-os/router/internal/observability/otel"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/router"
@@ -258,4 +259,40 @@ func TestDecisionSpan_RolloutIDFromClientIdentity(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "rollout-example-001", spanStr(t, spans[0], "rollout_id"))
 	assert.Equal(t, EvalClientAppPrefix+ClientAppCodex, spanStr(t, spans[0], "client.app"))
+}
+
+func TestDecisionSpanCarriesCallerRoutingState(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		ctx             context.Context
+		wantPassthrough bool
+		wantSource      callerRoutingSource
+	}{
+		{name: "default routed", ctx: context.Background(), wantSource: callerRoutingSourceDefault},
+		{
+			name: "experiment passthrough arm",
+			ctx: context.WithValue(context.Background(), auth.BlindExperimentContextKey{}, auth.BlindExperimentState{
+				Active: true,
+				Arm:    auth.BlindExperimentArmPassthrough,
+			}),
+			wantPassthrough: true,
+			wantSource:      callerRoutingSourceExperiment,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			collector := newBypassSpanCollector(t)
+			svc := newEmbedTestService(t, collector, &embedTestRouter{}, nil)
+			rec := httptest.NewRecorder()
+			httpReq := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(""))
+			require.NoError(t, svc.ProxyMessages(tc.ctx, embedTurnBody(), rec, httpReq))
+			require.NoError(t, svc.emitter.(*otel.Emitter).Shutdown(context.Background()))
+
+			collector.mu.Lock()
+			defer collector.mu.Unlock()
+			spans := collector.byName["router.decision"]
+			require.Len(t, spans, 1)
+			assert.Equal(t, tc.wantPassthrough, spanBool(t, spans[0], "routing.caller_passthrough"))
+			assert.Equal(t, string(tc.wantSource), spanStr(t, spans[0], "routing.caller_routing_source"))
+		})
+	}
 }

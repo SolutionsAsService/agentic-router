@@ -4066,6 +4066,7 @@ func (s *Service) ProxyMessages(ctx context.Context, body []byte, w http.Respons
 	applySidecarAttrs(decisionBuilder, routeRes)
 	applyPlannerAttrs(decisionBuilder, routeRes)
 	applyRoutingStateAttrs(decisionBuilder, routeRes, decision.ServedIdentity(), sessionKey)
+	applyCallerRoutingAttrs(ctx, decisionBuilder)
 	otel.Record(ctx, otel.Span{
 		Name:  "router.decision",
 		Start: requestStart,
@@ -6946,6 +6947,7 @@ func (s *Service) ProxyOpenAIChatCompletion(ctx context.Context, body []byte, w 
 	applySidecarAttrs(openaiDecisionBuilder, routeRes)
 	applyPlannerAttrs(openaiDecisionBuilder, routeRes)
 	applyRoutingStateAttrs(openaiDecisionBuilder, routeRes, decision.ServedIdentity(), sessionKey)
+	applyCallerRoutingAttrs(ctx, openaiDecisionBuilder)
 	otel.Record(ctx, otel.Span{
 		Name:  "router.decision",
 		Start: requestStart,
