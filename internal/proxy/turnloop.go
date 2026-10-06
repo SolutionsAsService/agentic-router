@@ -867,6 +867,21 @@ func (s *Service) runTurnLoop(
 			req.ExcludedModels = s.readmitForcedModel(ctx, req, env, feats, forceModelPin)
 		}
 	}
+	// Current force-model state wins over the experiment. Otherwise resolve the
+	// passthrough arm before utility hard pins, automatic session pins or a
+	// scorer, as policy passthrough does. An honoured policy pin keeps utility
+	// turns on their hard pin; it has already scored every other turn.
+	if _, policyPinned := router.HonouredPolicyPin(ctx); !forceModelFound && !policyPinned {
+		decision, passthrough, err := s.blindExperimentPassthroughDecision(ctx, req)
+		if err != nil {
+			return res, err
+		}
+		if passthrough {
+			res.Decision = decision
+			res.CallerModelPassthrough = true
+			return res, nil
+		}
+	}
 	if hardPinnedTurn {
 		purpose, registered := utilityPurposes[res.TurnType]
 		if !registered {
@@ -1006,20 +1021,6 @@ func (s *Service) runTurnLoop(
 		res.Origin = origin
 		res.PinTier = string(res.TurnType) + "_hard_pin"
 		return res, nil
-	}
-
-	// Current force-model state wins over the experiment. Otherwise resolve the
-	// passthrough arm before reading automatic session pins or invoking a scorer.
-	if !forceModelFound {
-		decision, passthrough, err := s.blindExperimentPassthroughDecision(ctx, req)
-		if err != nil {
-			return res, err
-		}
-		if passthrough {
-			res.Decision = decision
-			res.CallerModelPassthrough = true
-			return res, nil
-		}
 	}
 
 	// Claude Code executes WebSearch in an isolated one-message request with a

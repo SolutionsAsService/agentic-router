@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"weave-os/router/internal/auth"
@@ -11,6 +12,7 @@ import (
 	"weave-os/router/internal/router"
 	"weave-os/router/internal/router/cluster"
 	"weave-os/router/internal/router/sessionpin"
+	"weave-os/router/internal/router/turntype"
 	"weave-os/router/internal/translate"
 
 	"github.com/google/uuid"
@@ -200,6 +202,132 @@ func TestCallerModelPassthroughHonorsExcludedModels(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, cluster.ErrNoEligibleProvider)
 	assert.Zero(t, routerSpy.routeCalls, "an excluded requested model must fail directly instead of falling through to automatic routing")
+}
+
+func blindExperimentUtilityTurnBodies() []struct {
+	turnType turntype.TurnType
+	body     string
+} {
+	return []struct {
+		turnType turntype.TurnType
+		body     string
+	}{
+		{turntype.Probe, `{"model":"claude-opus-4-8","max_tokens":1,"messages":[{"role":"user","content":"quota"}]}`},
+		{turntype.TitleGen, `{"model":"claude-opus-4-8","max_tokens":1024,"output_config":{"format":{"type":"json_schema","schema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}}},"messages":[{"role":"user","content":"title"}]}`},
+		{turntype.Compaction, `{"model":"claude-opus-4-8","max_tokens":1024,"system":"Your task is to create a detailed summary","messages":[{"role":"user","content":"summary"}]}`},
+		{turntype.SubAgentDispatch, `{"model":"claude-opus-4-8","max_tokens":1024,"metadata":{"user_id":"subagent:Explore"},"messages":[{"role":"user","content":"list go files"}]}`},
+	}
+}
+
+func runBlindExperimentUtilityTurn(t *testing.T, ctx context.Context, body string) turnLoopResult {
+	t.Helper()
+	routerSpy := &blindExperimentRouterSpy{err: errors.New("scorer must not run")}
+	service := NewService(routerSpy, nil, nil, false, nil, newStubPinStore(), false,
+		providers.ProviderGoogle, "gemini-3.1-flash-lite-preview", nil).
+		WithCompactionHardPin(true).
+		WithSubAgentOverride(providers.ProviderGoogle, "gemini-3-flash-preview")
+	envelope, err := translate.ParseAnthropic([]byte(body))
+	require.NoError(t, err)
+	features := envelope.RoutingFeatures(false)
+	loopResult, err := service.runTurnLoop(
+		ctx,
+		envelope,
+		features,
+		"api-key",
+		uuid.New(),
+		"",
+		http.Header{},
+		router.Request{
+			RequestedModel: features.Model,
+			EnabledProviders: map[string]struct{}{
+				providers.ProviderAnthropic: {},
+				providers.ProviderGoogle:    {},
+			},
+		},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, routerSpy.routeCalls)
+	return loopResult
+}
+
+func TestBlindExperimentPassthroughOutranksUtilityHardPins(t *testing.T) {
+	for _, testCase := range blindExperimentUtilityTurnBodies() {
+		t.Run(string(testCase.turnType), func(t *testing.T) {
+			loopResult := runBlindExperimentUtilityTurn(t, blindExperimentContext(auth.BlindExperimentArmPassthrough), testCase.body)
+
+			require.Equal(t, testCase.turnType, loopResult.TurnType)
+			assert.True(t, loopResult.CallerModelPassthrough)
+			assert.False(t, loopResult.HardPinned)
+			assert.Empty(t, loopResult.Purpose, "a passthrough turn is not authorized as deployment utility work")
+			assert.Equal(t, "claude-opus-4-8", loopResult.Decision.Model)
+			assert.Equal(t, providers.ProviderAnthropic, loopResult.Decision.Provider)
+			assert.Equal(t, blindExperimentPublicDecisionReason, loopResult.Decision.Reason)
+		})
+	}
+}
+
+func TestBlindExperimentRouterOnKeepsUtilityHardPins(t *testing.T) {
+	for _, testCase := range blindExperimentUtilityTurnBodies() {
+		t.Run(string(testCase.turnType), func(t *testing.T) {
+			loopResult := runBlindExperimentUtilityTurn(t, blindExperimentContext(auth.BlindExperimentArmRouterOn), testCase.body)
+
+			require.Equal(t, testCase.turnType, loopResult.TurnType)
+			assert.True(t, loopResult.HardPinned)
+			assert.False(t, loopResult.CallerModelPassthrough)
+			assert.Equal(t, string(testCase.turnType)+"_hard_pin", loopResult.Decision.Reason)
+			assert.NotEqual(t, "claude-opus-4-8", loopResult.Decision.Model)
+		})
+	}
+}
+
+func TestBlindExperimentPassthroughKeepsUtilityHardPinsUnderPolicyPin(t *testing.T) {
+	ctx := router.WithPolicyPinRequest(blindExperimentContext(auth.BlindExperimentArmPassthrough), router.PolicyPinRequest{
+		Pin: router.PolicyPin{
+			ArtifactSHA256: strings.Repeat("a", 64),
+			RosterSHA256:   strings.Repeat("b", 64),
+		},
+		Authorized: true,
+	})
+	for _, testCase := range blindExperimentUtilityTurnBodies() {
+		t.Run(string(testCase.turnType), func(t *testing.T) {
+			loopResult := runBlindExperimentUtilityTurn(t, ctx, testCase.body)
+
+			require.Equal(t, testCase.turnType, loopResult.TurnType)
+			assert.True(t, loopResult.HardPinned)
+			assert.False(t, loopResult.CallerModelPassthrough)
+			assert.Equal(t, string(testCase.turnType)+"_hard_pin", loopResult.Decision.Reason)
+			assert.NotEqual(t, "claude-opus-4-8", loopResult.Decision.Model)
+		})
+	}
+}
+
+func TestBlindExperimentPassthroughYieldsUtilityTurnToForceModel(t *testing.T) {
+	routerSpy := &blindExperimentRouterSpy{err: errors.New("scorer must not run")}
+	service := NewService(routerSpy, nil, nil, false, nil, newStubPinStore(), false,
+		providers.ProviderGoogle, "gemini-3.1-flash-lite-preview", nil)
+	envelope, err := translate.ParseAnthropic([]byte(`{"model":"claude-opus-4-8","max_tokens":1,"messages":[{"role":"user","content":"quota"}]}`))
+	require.NoError(t, err)
+
+	loopResult, err := service.runTurnLoop(
+		blindExperimentContext(auth.BlindExperimentArmPassthrough),
+		envelope,
+		envelope.RoutingFeatures(false),
+		"api-key",
+		uuid.New(),
+		"",
+		http.Header{},
+		router.Request{
+			RequestedModel:   "claude-opus-4-8",
+			ForceModel:       "claude-sonnet-4-6",
+			EnabledProviders: map[string]struct{}{providers.ProviderAnthropic: {}},
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, turntype.Probe, loopResult.TurnType)
+	assert.False(t, loopResult.CallerModelPassthrough)
+	assert.Equal(t, "claude-sonnet-4-6", loopResult.Decision.Model)
+	assert.Equal(t, translate.ReasonUserForceModel, loopResult.Decision.Reason)
 }
 
 func TestBlindExperimentRouterOnUsesScorer(t *testing.T) {
