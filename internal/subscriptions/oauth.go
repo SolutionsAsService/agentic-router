@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"weave-os/router/internal/auth"
 	"weave-os/router/internal/observability"
 )
 
@@ -40,6 +42,7 @@ type RefreshedToken struct {
 	AccessToken  string
 	RefreshToken string
 	AccountID    string
+	UserID       string
 	ExpiresAt    time.Time
 }
 
@@ -148,7 +151,12 @@ func (c *OAuthClient) refreshCodex(ctx context.Context, refreshToken string) (Re
 	if accountID == "" {
 		accountID = accountIDFromJWT(response.AccessToken)
 	}
-	return c.validatedToken(ProviderCodex, response.AccessToken, response.RefreshToken, accountID, response.ExpiresIn)
+	token, err := c.validatedToken(ProviderCodex, response.AccessToken, response.RefreshToken, accountID, response.ExpiresIn)
+	token.UserID = userIDFromJWT(response.IDToken)
+	if token.UserID == "" {
+		token.UserID = userIDFromJWT(response.AccessToken)
+	}
+	return token, err
 }
 
 func (c *OAuthClient) refreshClaude(ctx context.Context, refreshToken string) (RefreshedToken, error) {
@@ -240,6 +248,33 @@ func accountIDFromJWT(token string) string {
 	}
 	if len(claims.Organizations) > 0 {
 		return claims.Organizations[0].ID
+	}
+	return ""
+}
+
+// VerifyCodexEnrollment derives identity from the provider HTTPS token exchange,
+// never from enrollment labels or client-supplied JWT claims.
+func (c *OAuthClient) VerifyCodexEnrollment(ctx context.Context, workspaceID string, refreshToken []byte) (auth.VerifiedCodexEnrollment, error) {
+	token, err := c.Refresh(ctx, ProviderCodex, string(refreshToken))
+	if err != nil {
+		return auth.VerifiedCodexEnrollment{}, err
+	}
+	if token.AccountID != workspaceID || token.UserID == "" {
+		return auth.VerifiedCodexEnrollment{}, fmt.Errorf("Codex enrollment did not verify the workspace and provider user")
+	}
+	return auth.VerifiedCodexEnrollment{ProviderUserID: token.UserID, RefreshToken: []byte(token.RefreshToken)}, nil
+}
+
+func userIDFromJWT(token string) string {
+	claims := jwt.MapClaims{}
+	if _, _, err := new(jwt.Parser).ParseUnverified(token, claims); err != nil {
+		return ""
+	}
+	authClaims, _ := claims["https://api.openai.com/auth"].(map[string]any)
+	for _, userIDClaim := range []any{authClaims["chatgpt_user_id"], authClaims["user_id"], claims["chatgpt_user_id"], claims["user_id"]} {
+		if userID, ok := userIDClaim.(string); ok && userID != "" {
+			return userID
+		}
 	}
 	return ""
 }
