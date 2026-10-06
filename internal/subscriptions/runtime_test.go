@@ -34,6 +34,31 @@ type runtimeStore struct {
 	extendCount          atomic.Int32
 }
 
+// ListSubscriptionCandidates mirrors the candidate SQL: every subscriber-assigned
+// account is admitted, the requester's personal accounts first.
+func (s *runtimeStore) ListSubscriptionCandidates(_ context.Context, owner auth.SubscriptionOwner) ([]*auth.SubscriptionAccount, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var personal, shared []*auth.SubscriptionAccount
+	if owner.SubscriberID == "" {
+		return nil, nil
+	}
+	for _, account := range s.accounts {
+		if account.SubscriberID == "" {
+			continue
+		}
+		copied := *account
+		if account.SubscriberID == owner.SubscriberID {
+			copied.Tier = auth.SubscriptionTierPersonal
+			personal = append(personal, &copied)
+		} else {
+			copied.Tier = auth.SubscriptionTierShared
+			shared = append(shared, &copied)
+		}
+	}
+	return append(personal, shared...), nil
+}
+
 // ListSubscriptionAccounts mirrors the storage ownership predicate: a
 // subscriber-owned row answers to its subscriber, a legacy row only to the key
 // that enrolled it.
@@ -181,6 +206,19 @@ func (s *runtimeStore) UpdateSubscriptionAccountCooldown(_ context.Context, _ au
 func (s *runtimeStore) UpdateSubscriptionAccountHealth(_ context.Context, _ auth.SubscriptionOwner, accountID string, state auth.SubscriptionAccountState, enabled bool, cooldownUntil *time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, account := range s.accounts {
+		if account.ID != accountID {
+			continue
+		}
+		account.Enabled = account.Enabled && enabled
+		// Mirror SQL: activation preserves an unexpired cooldown.
+		if state == auth.SubscriptionAccountStateActive && account.CooldownUntil != nil && account.CooldownUntil.After(time.Now()) {
+			state = account.State
+			cooldownUntil = account.CooldownUntil
+		}
+		account.State = state
+		account.CooldownUntil = cooldownUntil
+	}
 	s.healthStates[accountID] = state
 	s.enabledUpdates[accountID] = enabled
 	if cooldownUntil != nil {
@@ -577,10 +615,16 @@ func TestRuntimeReleasesCanceledRefreshLease(t *testing.T) {
 			_, present, err := runtime.Lease(ctx, testOwner, subscriptions.ProviderClaude, "")
 			require.ErrorIs(t, err, requestErr)
 			require.True(t, present)
-			require.Empty(t, store.leaseIDs)
-			require.Empty(t, store.leaseUntil)
+			// The detached refresh releases its lease after the caller returns.
+			require.Eventually(t, func() bool {
+				store.mu.Lock()
+				defer store.mu.Unlock()
+				return len(store.leaseIDs) == 0 && len(store.leaseUntil) == 0
+			}, time.Second, time.Millisecond)
+			store.mu.Lock()
 			require.Empty(t, store.enabledUpdates)
 			require.Empty(t, store.cooldowns)
+			store.mu.Unlock()
 			acquisition, err := store.TryAcquireSubscriptionRefreshLease(context.Background(), testOwner, "account-1", "next-holder", time.Minute)
 			require.NoError(t, err)
 			require.True(t, acquisition.Acquired)
@@ -910,6 +954,50 @@ func TestRuntimeSharesPoolAcrossSubscriberKeys(t *testing.T) {
 		subscriptions.ErrNoAvailableAccount)
 }
 
+func TestRuntimeActivateDuringCooldownPreservesCooldown(t *testing.T) {
+	cooldownUntil := time.Now().Add(time.Hour)
+	store := newRuntimeStore(&auth.SubscriptionAccount{
+		ID: "account-1", SubscriberID: "subscriber-1", EnrolledByAPIKeyID: "key-1", Provider: auth.SubscriptionProviderClaude,
+		Enabled: true, State: auth.SubscriptionAccountStateExhausted, CooldownUntil: &cooldownUntil,
+	})
+	runtime := subscriptions.NewRuntime(store, nil, nil)
+	require.NoError(t, runtime.Activate(context.Background(), testOwner, subscriptions.ProviderClaude, "account-1"))
+	require.Equal(t, auth.SubscriptionAccountStateExhausted, store.healthStates["account-1"])
+	require.Equal(t, cooldownUntil, store.cooldowns["account-1"])
+}
+
+// Shared capacity follows personal capacity and is attributed to its owner.
+func TestRuntimeLeasesAnotherMembersSharedAccountAfterPersonal(t *testing.T) {
+	store := newRuntimeStore(
+		&auth.SubscriptionAccount{ID: "shared-account", SubscriberID: "subscriber-2", EnrolledByAPIKeyID: "key-2",
+			Provider: auth.SubscriptionProviderClaude, ExternalAccountID: "claude-shared", Enabled: true},
+		&auth.SubscriptionAccount{ID: "personal-account", SubscriberID: "subscriber-1", EnrolledByAPIKeyID: "key-1",
+			Provider: auth.SubscriptionProviderClaude, ExternalAccountID: "claude-personal", Enabled: true},
+	)
+	store.refreshTokens["shared-account"] = []byte("refresh-shared")
+	store.refreshTokens["personal-account"] = []byte("refresh-personal")
+	runtime := subscriptions.NewRuntime(store, runtimeRefreshFunc(func(_ context.Context, _ subscriptions.Provider, token string) (subscriptions.RefreshedToken, error) {
+		return subscriptions.RefreshedToken{AccessToken: "access-" + token, RefreshToken: token, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}), nil)
+
+	personal, present, err := runtime.Lease(context.Background(), testOwner, subscriptions.ProviderClaude, "")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, "personal-account", personal.AccountID)
+	require.Equal(t, auth.SubscriptionTierPersonal, personal.Tier)
+	personal.Release()
+
+	excluded := testOwner
+	excluded.ExcludedAccountIDs = []string{"personal-account"}
+	shared, present, err := runtime.Lease(context.Background(), excluded, subscriptions.ProviderClaude, "")
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, "shared-account", shared.AccountID)
+	require.Equal(t, "subscriber-2", shared.OwnerID)
+	require.Equal(t, auth.SubscriptionTierShared, shared.Tier)
+	shared.Release()
+}
+
 func TestRuntimeKeepsLegacyAccountsOutOfSubscriberPool(t *testing.T) {
 	store := newRuntimeStore(&auth.SubscriptionAccount{
 		ID: "legacy-account", EnrolledByAPIKeyID: "key-1",
@@ -920,13 +1008,12 @@ func TestRuntimeKeepsLegacyAccountsOutOfSubscriberPool(t *testing.T) {
 		return subscriptions.RefreshedToken{AccessToken: "access", RefreshToken: "refresh-secret", ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}), nil)
 
-	// The enrolling key still serves its unmigrated row through the subscriber.
-	enrolling := auth.SubscriptionOwner{SubscriberID: "subscriber-1", APIKeyID: "key-1"}
+	// Unassigned legacy capacity is quarantined until an administrator assigns it.
+	enrolling := auth.SubscriptionOwner{APIKeyID: "key-1"}
 	lease, present, err := runtime.Lease(context.Background(), enrolling, subscriptions.ProviderClaude, "")
 	require.NoError(t, err)
-	require.True(t, present)
-	require.Equal(t, "legacy-account", lease.AccountID)
-	lease.Release()
+	require.False(t, present)
+	require.Empty(t, lease.AccountID)
 
 	// A second key of that subscriber must not reach it through the shared pool.
 	sibling := auth.SubscriptionOwner{SubscriberID: "subscriber-1", APIKeyID: "key-2"}

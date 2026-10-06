@@ -143,11 +143,11 @@ func withAPIKey(svc *auth.Service, byokRequiresOptIn bool, serving ...*ServingAd
 		if apiKey != nil {
 			ctx = context.WithValue(ctx, proxy.APIKeyIDContextKey{}, apiKey.ID)
 			ctx = proxy.WithManagedSubscriptionUsage(ctx)
-			owner := subscriptionOwnerForRequest(c, svc, apiKey)
+			owner := subscriptionOwnerForRequest(c, apiKey)
 			c.Set(ctxKeySubscriptionOwner, owner)
 			ctx = proxy.WithSubscriptionOwner(ctx, owner)
 			if testPlan == nil && svc.SubscriptionAccountsEnabled() {
-				accounts, listErr := svc.ListSubscriptionAccounts(ctx, owner)
+				accounts, listErr := svc.ListSubscriptionCandidates(ctx, owner)
 				if listErr != nil {
 					observability.FromContext(ctx).Error("Failed to load subscription account enrollment", "err", listErr)
 					ctx = context.WithValue(ctx, proxy.ManagedSubscriptionEnrollmentUnavailableContextKey{}, true)
@@ -159,10 +159,7 @@ func withAPIKey(svc *auth.Service, byokRequiresOptIn bool, serving ...*ServingAd
 					if len(enrolled) > 0 {
 						ctx = context.WithValue(ctx, proxy.ManagedSubscriptionProvidersContextKey{}, enrolled)
 					}
-					planStates := proxy.ManagedSubscriptionPlanStates(accounts, svc.CurrentTime())
-					if len(planStates) > 0 {
-						ctx = context.WithValue(ctx, proxy.ManagedSubscriptionPlanStatesContextKey{}, planStates)
-					}
+
 				}
 			}
 		}
@@ -360,38 +357,27 @@ func SubscriptionOwnerFrom(c *gin.Context) auth.SubscriptionOwner {
 // for the subscription-management endpoints: their owner decides whose linked
 // account is listed, disabled or deleted, so they must not act on an identity
 // the cache still remembers after Weave withdrew it.
-func SubscriptionOwnerLive(c *gin.Context, svc *auth.Service) auth.SubscriptionOwner {
+func SubscriptionOwnerLive(c *gin.Context, svc *auth.Service) (auth.SubscriptionOwner, error) {
 	apiKey := APIKeyFrom(c)
 	if apiKey == nil || svc == nil {
-		return SubscriptionOwnerFrom(c)
+		return auth.SubscriptionOwner{}, nil
 	}
-	email := proxy.ClientIdentityFromHeaders(c.Request.Header).Email
-	owner, err := svc.SubscriptionOwnerForRequestUncached(c.Request.Context(), apiKey, email)
+	owner, err := svc.SubscriptionOwnerForRequestUncached(c.Request.Context(), apiKey)
 	if err != nil {
 		observability.FromGin(c).Error("Failed to resolve request identity for subscription management", "err", err)
-		return SubscriptionOwnerFrom(c)
+		return auth.SubscriptionOwner{}, err
 	}
-	return owner
+	return owner, nil
 }
 
-// subscriptionOwnerForRequest resolves the caller behind the request email.
-// The resolution never writes to the *auth.APIKey: VerifyAPIKey hands out a
-// cached pointer shared by every concurrent request presenting that key, so a
-// per-request identity written there would leak across callers.
-//
-// A resolution failure falls back to the key's own identity rather than
-// refusing the turn: the projection is an attribution improvement, and an
-// unavailable one must not take routing down.
-func subscriptionOwnerForRequest(c *gin.Context, svc *auth.Service, apiKey *auth.APIKey) auth.SubscriptionOwner {
+// subscriptionOwnerForRequest binds personal capacity to the authenticated key
+// subject. Client-asserted email is attribution only and cannot grant ownership;
+// live candidate SQL revalidates subject eligibility and installation membership.
+func subscriptionOwnerForRequest(c *gin.Context, apiKey *auth.APIKey) auth.SubscriptionOwner {
 	if _, ok := requestcontext.InternalTestIdentityFrom(c.Request.Context()); ok {
 		return auth.SubscriptionOwner{}
 	}
-	email := proxy.ClientIdentityFromHeaders(c.Request.Header).Email
-	owner, err := svc.SubscriptionOwnerForRequest(c.Request.Context(), apiKey, email)
-	if err != nil {
-		observability.FromGin(c).Error("Failed to resolve request identity; billing the key's own subscriber", "err", err)
-	}
-	return owner
+	return auth.SubscriptionOwnerForKey(apiKey)
 }
 
 // AdminPrincipalFrom retrieves the admin principal set when the request authenticated via the session cookie. Returns nil for rk_-keyed or unauthed requests.

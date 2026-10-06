@@ -37,7 +37,7 @@ func spentCodexService(p *fakeProvider) *proxy.Service {
 		Primary: usage.Window{UsedPercent: 1.0, WindowMinutes: 300},
 	})
 	return proxy.NewService(fr, map[string]providers.Client{providers.ProviderOpenAI: p}, nil, false, nil, nil, false, providers.ProviderOpenAI, "gpt-5.6-sol", nil).
-		WithSubscriptionAwareRouting(obs, 0.05, 2.0).
+		WithUsageObserver(obs).
 		WithDeploymentKeyedProviders(map[string]struct{}{providers.ProviderOpenAI: {}})
 }
 
@@ -116,7 +116,7 @@ func TestLinkedFirst_Anthropic_SpentClaudePlan_ContinuesOnWeaveKey(t *testing.T)
 		Secondary: usage.Window{UsedPercent: 1.0, WindowMinutes: 10080},
 	})
 	svc := proxy.NewService(fr, map[string]providers.Client{providers.ProviderAnthropic: p}, nil, false, nil, nil, false, providers.ProviderAnthropic, bypassScorerPickMdl, nil).
-		WithSubscriptionAwareRouting(obs, 0.05, 2.0).
+		WithUsageObserver(obs).
 		WithDeploymentKeyedProviders(map[string]struct{}{providers.ProviderAnthropic: {}})
 
 	rec, req, body := bypassRequest(t)
@@ -161,7 +161,7 @@ func TestLinkedFirst_Anthropic_BypassThrottled_ReroutesOnCredits(t *testing.T) {
 		Primary: usage.Window{UsedPercent: 0.20, WindowMinutes: 300},
 	})
 	svc := proxy.NewService(fr, map[string]providers.Client{providers.ProviderAnthropic: observing}, nil, false, nil, nil, false, providers.ProviderAnthropic, bypassScorerPickMdl, nil).
-		WithSubscriptionAwareRouting(obs, 0.05, 2.0).
+		WithUsageObserver(obs).
 		WithDeploymentKeyedProviders(map[string]struct{}{providers.ProviderAnthropic: {}})
 
 	rec, req, body := bypassRequest(t)
@@ -178,12 +178,11 @@ func TestLinkedFirst_Anthropic_BypassThrottled_ReroutesOnCredits(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "credits are depleted")
 }
 
-// TestLinkedFirst_Anthropic_SpentClaudePlan_NoFallbackKey_Refuses402: with the
-// plan observed-exhausted and no Anthropic fallback key, nothing can serve the
-// turn — the spent credential is deliberately kept (claudeSubscriptionExhausted
-// won't strip it) rather than left empty, so releasing the mark would only
-// dispatch onto a plan already known to 429. The pre-dispatch refusal stays.
-func TestLinkedFirst_Anthropic_SpentClaudePlan_NoFallbackKey_Refuses402(t *testing.T) {
+// TestLinkedFirst_Anthropic_SpentClaudePlan_NoFallbackKey_RefusesPoolExhausted:
+// with the plan observed-exhausted and no Anthropic fallback key, nothing can
+// serve the turn, so it is refused as subscription pool exhaustion before any
+// dispatch onto a plan already known to 429.
+func TestLinkedFirst_Anthropic_SpentClaudePlan_NoFallbackKey_RefusesPoolExhausted(t *testing.T) {
 	fr := &fakeRouter{decision: router.Decision{Provider: providers.ProviderAnthropic, Model: bypassScorerPickMdl}}
 	p := &fakeProvider{proxyResponse: bypassStreamResponse}
 	obs := usage.NewObserver([]byte("salt"), 10*time.Minute, time.Now)
@@ -191,13 +190,12 @@ func TestLinkedFirst_Anthropic_SpentClaudePlan_NoFallbackKey_Refuses402(t *testi
 		Secondary: usage.Window{UsedPercent: 1.0, WindowMinutes: 10080},
 	})
 	svc := proxy.NewService(fr, map[string]providers.Client{providers.ProviderAnthropic: p}, nil, false, nil, nil, false, providers.ProviderAnthropic, bypassScorerPickMdl, nil).
-		WithSubscriptionAwareRouting(obs, 0.05, 2.0)
+		WithUsageObserver(obs)
 
 	rec, req, body := bypassRequest(t)
 	ctx := billing.WithSubscriptionOnly(bypassCtx(0.80), billing.SubscriptionOnlyLinkedFirst)
 	err := svc.ProxyMessages(ctx, body, rec, req)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, proxy.ErrCreditsExhaustedSubscriptionUnavailable))
+	require.ErrorIs(t, err, proxy.ErrSubscriptionPoolExhausted)
 	assert.Empty(t, p.proxyBodies, "a plan already known to be spent must not be dispatched on when nothing else can serve")
 }
 
@@ -207,6 +205,9 @@ type headerObservingProvider struct {
 	headers http.Header
 	inner   providers.Client
 }
+
+// Synthetic provider never bills subscription extra usage.
+func (*headerObservingProvider) IncludedOnlySubscriptions() bool { return true }
 
 func (h *headerObservingProvider) Proxy(ctx context.Context, decision router.Decision, prep providers.PreparedRequest, w http.ResponseWriter, r *http.Request) error {
 	providers.ObserveUpstreamHeaders(ctx, h.headers)

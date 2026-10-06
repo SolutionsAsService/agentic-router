@@ -43,7 +43,8 @@ type ResponsesToOpenAIChatWriter struct {
 	headersEmitted bool
 	started        bool
 	// closed guards against emitting after [DONE] or an error frame.
-	closed bool
+	closed          bool
+	terminalFailure error
 
 	// Reasoning resets the stall clock without changing output latency/throughput.
 	onOutputProgress    func()
@@ -792,6 +793,10 @@ func (t *ResponsesToOpenAIChatWriter) emitDone() error {
 // after output starts it emits an in-stream error frame, since the response is
 // already committed.
 func (t *ResponsesToOpenAIChatWriter) emitStreamError(errType, msg string) error {
+	t.terminalFailure = &providers.UpstreamErrorResponse{
+		Status: responsesFailureStatus(errType),
+		Body:   openAIErrorBody(errType, msg),
+	}
 	if t.lifecycle.State() == StreamStarted {
 		if err := t.lifecycle.Fail(); err != nil {
 			return err
@@ -810,7 +815,8 @@ func (t *ResponsesToOpenAIChatWriter) emitStreamError(errType, msg string) error
 	if err := t.flushEvent(); err != nil {
 		return err
 	}
-	return t.emitDone()
+	t.closed = true
+	return nil
 }
 
 func (t *ResponsesToOpenAIChatWriter) emitEmptyCompletion() error {
@@ -869,3 +875,6 @@ var (
 	_ http.ResponseWriter = (*ResponsesToOpenAIChatWriter)(nil)
 	_ http.Flusher        = (*ResponsesToOpenAIChatWriter)(nil)
 )
+
+// UpstreamError preserves terminal failure even when its client error frame was written successfully.
+func (t *ResponsesToOpenAIChatWriter) UpstreamError() error { return t.terminalFailure }

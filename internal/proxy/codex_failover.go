@@ -10,6 +10,7 @@ import (
 	"weave-os/router/internal/observability"
 	"weave-os/router/internal/providers"
 	"weave-os/router/internal/proxy/usage"
+	"weave-os/router/internal/router"
 )
 
 // codexQuotaErrorTypes are the OpenAI error types that mean the caller's own
@@ -61,21 +62,21 @@ func (s *Service) openaiFallbackKeyAvailable(ctx context.Context) bool {
 }
 
 // codexSubscriptionExhausted reports whether the caller's present Codex
-// subscription has bound its plan window per the usage observer AND a
-// non-subscription OpenAI key exists to serve the turn instead. The Codex
-// counterpart of claudeSubscriptionExhausted: when true the caller suppresses
-// the spent token pre-dispatch (withSuppressedCodexSubscription) so the turn
-// runs on Weave credits rather than buying another rejected round-trip.
+// subscription has bound its plan window or is drawing billable overage per the
+// usage observer, regardless of whether an OpenAI fallback key exists. When true the
+// caller suppresses the spent token pre-dispatch (withSuppressedCodexSubscription)
+// so the turn tries an eligible shared subscription or API fallback, and is
+// refused when neither is available.
 func (s *Service) codexSubscriptionExhausted(ctx context.Context, headers http.Header) bool {
 	if s.usageObserver == nil {
 		return false
 	}
 	codexTok, _ := presentSubscriptionTokens(ctx, headers)
-	if codexTok == "" || !s.openaiFallbackKeyAvailable(ctx) {
+	if codexTok == "" {
 		return false
 	}
 	snap, ok := s.usageObserver.Snapshot(s.usageObserver.Key([]byte(codexTok)))
-	return ok && snap.Exhausted()
+	return ok && snap.BillableOrExhausted()
 }
 
 // codexSubscriptionModelRejected reports an explicit model-availability
@@ -105,13 +106,13 @@ func codexSubscriptionModelRejected(err error) bool {
 
 // codexSubscriptionModelUnavailable makes a cached pool denial look like the
 // structured Codex model error so the same bounded API-credential fallback runs.
-func codexSubscriptionModelUnavailable() error {
+func codexSubscriptionModelUnavailable(model string) error {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]string{
 			"type":    "invalid_request_error",
 			"code":    "model_not_found",
 			"param":   "model",
-			"message": "The selected model is unavailable to this subscription.",
+			"message": "The model " + router.StripDateSuffix(model) + " is unavailable to this subscription.",
 		},
 	})
 	return &providers.UpstreamErrorResponse{Status: http.StatusNotFound, Body: body}

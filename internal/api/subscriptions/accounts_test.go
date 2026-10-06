@@ -3,7 +3,6 @@ package subscriptions_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +20,7 @@ import (
 type keyRepo struct{ auth.APIKeyRepository }
 
 func (keyRepo) GetActiveByHashWithInstallation(context.Context, string) (*auth.APIKey, *auth.Installation, error) {
-	return &auth.APIKey{ID: "key", ExternalID: "kid-key", InstallationID: "installation", Scope: auth.ScopeRouting},
+	return &auth.APIKey{ID: "key", CredentialSubjectID: "subject-sam", ExternalID: "kid-key", InstallationID: "installation", Scope: auth.ScopeRouting},
 		&auth.Installation{ID: "installation", ExternalID: "org-test"}, nil
 }
 
@@ -58,7 +57,7 @@ func TestCreateAccountAttributesConnectionToInstallation(t *testing.T) {
 	events := &recorder{}
 	now := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	svc := auth.NewService(installationRepo{}, keyRepo{}, nil, nil, auth.NoOpAPIKeyCache{}, nil, func() time.Time { return now }).
-		WithSubscriptionAccounts(accountRepo{}).WithOnboardingObserver(events)
+		WithSubscriptionAccounts(accountRepo{}).WithCredentialSubjectLookup(verifiedSubject{}).WithOnboardingObserver(events)
 	engine := gin.New()
 	group := engine.Group("/v1", middleware.WithAuth(svc, false))
 	subscriptionsapi.Register(group, svc)
@@ -73,7 +72,7 @@ func TestCreateAccountAttributesConnectionToInstallation(t *testing.T) {
 	engine.ServeHTTP(response, request)
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
 	require.Equal(t, []auth.SubscriptionConnectedEvent{{
-		InstallationExternalID: "org-test", APIKeyID: "key", AccountID: "account",
+		InstallationExternalID: "org-test", CredentialSubjectID: "subject-sam", APIKeyID: "key", AccountID: "account",
 		Provider: auth.SubscriptionProviderCodex, OccurredAt: now,
 	}}, events.events)
 }
@@ -93,25 +92,12 @@ func (r *ownerRecordingRepo) UpsertSubscriptionAccount(_ context.Context, params
 	return &auth.SubscriptionAccount{ID: "account", Provider: params.Provider}, auth.SubscriptionUpsertInserted, nil
 }
 
-// projectedIdentities is Weave's email-to-person projection for one installation.
-type projectedIdentities map[string]string
-
-func (p projectedIdentities) GetSubscriberForEmail(_ context.Context, _, email string) (string, error) {
-	subjectID, projected := p[email]
-	if !projected {
-		return "", sql.ErrNoRows
-	}
-	return subjectID, nil
-}
-
-// A key handed to a teammate enrolls the teammate's own login, so the person
-// who authenticated the call does not end up owning their subscription.
-func TestCreateAccountEnrollsTheCallerBehindASharedKey(t *testing.T) {
+// Enrollment belongs to the verified personal key subject; an unsigned caller email cannot transfer ownership.
+func TestCreateAccountEnrollsVerifiedPersonalKeyOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accounts := &ownerRecordingRepo{}
 	svc := auth.NewService(installationRepo{}, keyRepo{}, nil, nil, auth.NoOpAPIKeyCache{}, nil, time.Now).
-		WithSubscriptionAccounts(accounts).
-		WithRequestIdentities(projectedIdentities{"sam@weave.test": "subject-sam"})
+		WithSubscriptionAccounts(accounts).WithCredentialSubjectLookup(verifiedSubject{})
 	engine := gin.New()
 	group := engine.Group("/v1", middleware.WithAuth(svc, false))
 	subscriptionsapi.Register(group, svc)
@@ -122,10 +108,21 @@ func TestCreateAccountEnrollsTheCallerBehindASharedKey(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/subscriptions/accounts", bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer rk_test")
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Weave-User-Email", "Sam@Weave.test")
+	request.Header.Set("X-Weave-User-Email", "Ali@Weave.test")
 	response := httptest.NewRecorder()
 	engine.ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-	require.Equal(t, auth.SubscriptionOwner{SubscriberID: "subject-sam", APIKeyID: "key"}, accounts.owner)
+	require.Equal(t, auth.SubscriptionOwner{SubscriberID: "subject-sam", APIKeyID: "key", InstallationID: "installation"}, accounts.owner)
+}
+
+type verifiedSubject struct{}
+
+// GetCredentialSubject admits only the key's own subject in its installation,
+// so ownership cannot come from the caller email.
+func (verifiedSubject) GetCredentialSubject(_ context.Context, subjectID, installationID string) (*auth.CredentialSubject, error) {
+	if subjectID != "subject-sam" || installationID != "installation" {
+		return nil, auth.ErrPersonalCredentialRequired
+	}
+	return &auth.CredentialSubject{ID: subjectID, ProjectionComplete: true, AccessEnabled: true}, nil
 }

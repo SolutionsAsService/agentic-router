@@ -241,6 +241,8 @@ const oauthBetaToken = "oauth-2025-04-20"
 // sk-ant-oat01…) used to gate the oauth beta header on the pure-passthrough path.
 const subscriptionTokenPrefix = "sk-ant-oat"
 
+var errInboundSubscriptionRelay = errors.New("refusing to relay inbound Claude subscription bearer without included-only enforcement")
+
 // setAuth resolves credentials in precedence order: resolved per-request
 // credential (subscription/BYOK/client), deployment key, then client-sent auth
 // headers. A subscription OAuth credential authenticates via Authorization:
@@ -304,10 +306,8 @@ func (c *Client) subscriptionAuth(ctx context.Context, inbound *http.Request) bo
 	if c.apiKey != "" {
 		return false
 	}
-	if raw, found := strings.CutPrefix(inbound.Header.Get("authorization"), "Bearer "); found {
-		return strings.HasPrefix(strings.TrimSpace(raw), subscriptionTokenPrefix)
-	}
-	return false
+	scheme, token, found := strings.Cut(strings.TrimSpace(inbound.Header.Get("authorization")), " ")
+	return found && strings.EqualFold(scheme, "Bearer") && strings.HasPrefix(strings.TrimSpace(token), subscriptionTokenPrefix)
 }
 
 // claudeSubscriptionAuth reports whether this request authenticates with a
@@ -340,6 +340,13 @@ func mergeBeta(existing, token string) string {
 func (c *Client) Proxy(ctx context.Context, decision router.Decision, prep providers.PreparedRequest, w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+
+	// This adapter cannot enforce included-only subscription billing, so an
+	// inference call never relays an inbound Claude subscription bearer that
+	// proxy credential resolution suppressed or did not resolve.
+	if requestcontext.CredentialsFromContext(ctx) == nil && c.authScheme != AuthBearer && c.subscriptionAuth(ctx, r) {
+		return errInboundSubscriptionRelay
+	}
 
 	baseURL := requestcontext.EffectiveBaseURL(ctx, c.baseURL)
 	body := rewriteModelField(prep.Body, c.modelIDMap)
@@ -473,6 +480,9 @@ func (c *Client) proxyTo(ctx context.Context, cancel context.CancelCauseFunc, ur
 }
 
 func (c *Client) Passthrough(ctx context.Context, prep providers.PreparedRequest, w http.ResponseWriter, r *http.Request) error {
+	if requestcontext.CredentialsFromContext(ctx) == nil && c.authScheme != AuthBearer && c.subscriptionAuth(ctx, r) {
+		return errInboundSubscriptionRelay
+	}
 	url := requestcontext.EffectiveBaseURL(ctx, c.baseURL) + r.URL.Path
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
