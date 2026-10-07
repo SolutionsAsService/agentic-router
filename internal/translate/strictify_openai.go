@@ -2,6 +2,7 @@ package translate
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 )
@@ -53,6 +54,98 @@ func strictifyOpenAISchema(schema any) (out any, ok bool) {
 		return nil, false
 	}
 	return res, true
+}
+
+// closeOpenAISchemaObjects closes fallback object schemas when doing so keeps
+// their declared properties and composition semantics satisfiable.
+func closeOpenAISchemaObjects(schema any) (any, bool) {
+	root, isMap := schema.(map[string]any)
+	if !isMap {
+		return nil, false
+	}
+	return closeOpenAISchemaNode(root), true
+}
+
+func closeOpenAISchemaNode(node map[string]any) map[string]any {
+	closed := maps.Clone(node)
+
+	// Closing an object that composes properties from another schema can
+	// reject keys required by that schema. Keep such a node open while still
+	// visiting its independently declared child schemas.
+	composed := false
+	for _, keyword := range []string{"allOf", "anyOf", "oneOf"} {
+		if _, present := node[keyword]; present {
+			composed = true
+			break
+		}
+	}
+	_, hasProperties := node["properties"].(map[string]any)
+	if schemaNodeIsObject(node) && hasProperties && !composed {
+		if additional, present := node["additionalProperties"]; present && additional != false {
+			// Preserve freeform dictionaries while continuing through sibling
+			// schemas below.
+		} else {
+			closed["additionalProperties"] = false
+		}
+	}
+
+	for _, keyword := range []string{"properties", "items", "additionalProperties", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"} {
+		value, present := node[keyword]
+		if !present {
+			continue
+		}
+		switch nested := value.(type) {
+		case map[string]any:
+			if keyword == "properties" {
+				closedProperties := make(map[string]any, len(nested))
+				for name, property := range nested {
+					propertySchema, isSchema := property.(map[string]any)
+					if !isSchema {
+						closedProperties[name] = property
+						continue
+					}
+					closedProperties[name] = closeOpenAISchemaNode(propertySchema)
+				}
+				closed[keyword] = closedProperties
+				continue
+			}
+			closed[keyword] = closeOpenAISchemaNode(nested)
+		case []any:
+			children := make([]any, 0, len(nested))
+			for _, item := range nested {
+				childSchema, isSchema := item.(map[string]any)
+				if !isSchema {
+					children = append(children, item)
+					continue
+				}
+				if keyword == "allOf" {
+					children = append(children, childSchema)
+					continue
+				}
+				children = append(children, closeOpenAISchemaNode(childSchema))
+			}
+			closed[keyword] = children
+		}
+	}
+	return closed
+}
+
+func schemaNodeIsObject(node map[string]any) bool {
+	if node["type"] == "object" {
+		return true
+	}
+	_, hasProperties := node["properties"].(map[string]any)
+	if hasProperties {
+		return true
+	}
+	if types, union := node["type"].([]any); union {
+		for _, schemaType := range types {
+			if schemaType == "object" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // strictifyNode transforms one schema node, recursing into properties, items,
